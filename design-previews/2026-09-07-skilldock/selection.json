@@ -1,0 +1,14 @@
+{
+  "id": "D",
+  "label": "D: 原生工作间",
+  "name": "原生工作间",
+  "notes": "",
+  "dials": {
+    "variance": 5,
+    "motion": 3,
+    "density": 7
+  },
+  "adjustments": "风格简约一些，颜色蓝白为主",
+  "source": "click",
+  "receivedAt": "2026-09-07T08:11:44.343Z"
+}

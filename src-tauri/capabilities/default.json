@@ -1,0 +1,1 @@
+{"identifier":"main","description":"SkillDock 主窗口所需能力，文件写入仅通过受控 Commands","windows":["main"],"permissions":["core:default","dialog:allow-open","dialog:allow-save","opener:allow-open-url","notification:default","autostart:default","window-state:default"]}

@@ -1,0 +1,524 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>SkillDock · 四个设计方向</title><style>
+*{box-sizing:border-box}body{margin:0;background:#f3f3f1;color:#262724;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px;line-height:1.5}button,input,textarea{font:inherit}button{cursor:pointer}button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid #456847;outline-offset:3px}button{font-style:normal}h1,h2,p{margin:0}.intro{padding:28px 30px 21px;max-width:1660px;margin:auto}.intro h1{font-weight:600;font-size:26px;letter-spacing:-.6px}.intro p{margin-top:7px;color:#666961;font-size:13px}.dials{max-width:1660px;margin:0 auto;display:grid;grid-template-columns:repeat(3,1fr);gap:32px;padding:0 30px 20px}.dial{display:grid;gap:5px}.dial-head{display:flex;justify-content:space-between;font-size:13px}.dial output{font-variant-numeric:tabular-nums;font-weight:600}.dial small{color:#72776d;font-size:11px}.dial input{width:100%;accent-color:#434a41;margin:3px 0}.grid{max-width:1660px;margin:auto;padding:0 30px 26px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px}.direction{min-width:0;background:#fff;border:1px solid #d8dcd3;border-radius:10px;overflow:hidden;box-shadow:0 2px 3px #26332605}.direction-title{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #e8eae5}.direction-title h2{font-size:13px;display:flex;gap:9px;align-items:center;font-weight:500;color:#797e75}.direction-title h2 span{font-size:14px;color:#30352d}.direction-title b{font-size:10px;font-weight:500;padding:2px 7px;background:#edf2e9;color:#47683d;border-radius:4px}.enlarge{border:0;background:none;color:#676f60;font-size:12px;padding:5px}.mock{position:relative;overflow:hidden;aspect-ratio:8/5;width:100%}.stage{width:800px;height:500px;position:absolute;top:0;left:0;transform-origin:top left}.meta{padding:10px 16px 14px;display:grid;grid-template-columns:1fr;gap:6px}.meta>span{font-size:10px;color:#7a8172}.meta .qmdp-pick-button{margin:0;min-height:40px;font-weight:500;border-radius:6px;font-size:13px}.explanations{max-width:1660px;margin:auto;padding:4px 30px 36px}.recommendation{padding:18px 0;border-top:1px solid #d7dcd1;font-size:15px;font-weight:500}.details{display:grid;grid-template-columns:repeat(2,1fr);gap:18px 36px}.details h3{font-size:13px;font-weight:600;margin:0 0 5px}.details p{font-size:12px;color:#6a7264;line-height:1.7}.mix{margin-top:20px;font-size:12px;color:#68705f}.zoom-dialog{max-width:calc(100vw - 24px);width:1040px;padding:0;border:1px solid #bfc5ba;border-radius:12px;background:#fff;box-shadow:0 24px 100px #0003}.zoom-dialog::backdrop{background:#20262080}.zoom-head{display:flex;align-items:center;justify-content:space-between;padding:12px 20px}.zoom-head button{border:0;background:#eff1ec;padding:5px 12px;border-radius:5px}.zoom-body{overflow:auto}.zoom-body .zoom-stage{width:800px;height:500px;margin:0 auto;zoom:1.28}@media(max-width:760px){.intro{padding:20px 16px 18px}.intro h1{font-size:23px}.dials{padding:0 16px 22px;gap:12px;grid-template-columns:1fr}.dial{grid-template-columns:1fr 1.2fr;gap:5px 18px}.dial small{grid-column:1/-1;grid-row:2}.grid{grid-template-columns:1fr;padding:0 12px 24px;gap:18px}.direction-title{padding:11px 13px}.mock{aspect-ratio:8/5}.meta{padding:10px 13px 13px}.explanations{padding:0 16px 24px}.details{grid-template-columns:1fr;gap:16px}.zoom-body .zoom-stage{margin:0;zoom:1}.recommendation{font-size:14px}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important}}
+@media(max-width:760px){.mock{aspect-ratio:auto;height:450px;overflow:auto;overscroll-behavior:contain}.stage{position:relative;transform:none!important;zoom:.9}.direction-title::after{content:none}}
+</style></head><body><header class="intro"><h1>SkillDock，换一种工作方式。</h1><p>四个设计方向样机，用于选择界面风格；确认后进入正式实现。样机使用示例数据。</p></header>
+<section class="dials" data-qmdp-dials aria-label="设计拨盘"><label class="dial"><span class="dial-head">视觉冒险度<output data-qmdp-output="variance">5</output></span><input type="range" data-qmdp-dial="variance" min="1" max="10" value="5" aria-label="视觉冒险度"><small>稳妥熟悉 ← → 大胆鲜明</small></label><label class="dial"><span class="dial-head">动效强度<output data-qmdp-output="motion">3</output></span><input type="range" data-qmdp-dial="motion" min="1" max="10" value="3" aria-label="动效强度"><small>安静直接 ← → 丰富反馈</small></label><label class="dial"><span class="dial-head">信息密度<output data-qmdp-output="density">7</output></span><input type="range" data-qmdp-dial="density" min="1" max="10" value="7" aria-label="信息密度"><small>宽松舒展 ← → 紧凑高效</small></label></section><main class="grid"><article class="direction" data-design-option="A" data-name="纸面书库"><div class="direction-title"><h2>A <span>纸面书库</span></h2><button class="enlarge" type="button" data-enlarge="0" aria-label="放大方向 A">放大 ↗</button></div><div class="mock"><div class="stage" inert><style>
+.dir-a{width:800px;height:500px;overflow:hidden;background:#f8f6f0;color:#242420;font:14px/1.45 -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;box-sizing:border-box;padding:0 30px}.dir-a *{box-sizing:border-box}.dir-a button{font:inherit;border:0;cursor:pointer}.dir-a-header{height:72px;display:flex;align-items:center;border-bottom:1px solid #d9d5cb;gap:35px}.dir-a-brand{font:27px/1 Georgia,serif;letter-spacing:-1px}.dir-a-nav{display:flex;gap:25px;align-items:center;height:100%;font-size:13px;color:#77756d}.dir-a-nav b{height:100%;padding-top:28px;border-bottom:2px solid #a44835;color:#25251f;font-weight:600}.dir-a-account{margin-left:auto;display:flex;gap:7px;align-items:center;color:#79776d;font-size:11px}.dir-a-dot{height:5px;width:5px;background:#72856a;border-radius:50%}.dir-a-title{padding-top:24px;display:flex;align-items:flex-start;justify-content:space-between}.dir-a-kicker{font:10px/1.2 Georgia,serif;letter-spacing:2.2px;text-transform:uppercase;color:#8e7763;margin-bottom:8px}.dir-a-title h1{font-size:28px;line-height:1.25;letter-spacing:-1px;margin:0;font-weight:600}.dir-a-title p{font-size:12px;color:#807b70;margin:9px 0 0}.dir-a-action{margin-top:16px;background:#a44835;color:#fff9f2;padding:10px 15px;border-radius:3px;box-shadow:0 1px 0 #743626;white-space:nowrap;font-size:12px!important}.dir-a-body{display:grid;grid-template-columns:486px 1fr;gap:31px;margin-top:20px}.dir-a-toolbar{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #918c7e;padding-bottom:12px}.dir-a-tabs{display:flex;gap:17px;align-items:center;font-size:12px}.dir-a-tabs span{color:#929084}.dir-a-tabs b{font-weight:600}.dir-a-search{font-size:11px;color:#938d80;display:flex;gap:8px;align-items:center}.dir-a-search svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.5}.dir-a-row{display:grid;grid-template-columns:24px 1fr 101px;gap:12px;align-items:center;min-height:61px;border-bottom:1px solid #e3ded3}.dir-a-number{font:11px Georgia,serif;color:#aaa18f;align-self:start;padding-top:18px}.dir-a-name{font-size:14px;font-weight:550;letter-spacing:-.25px}.dir-a-description{font-size:12px;color:#989183;white-space:nowrap;margin-top:2px;overflow:hidden;text-overflow:ellipsis;max-width:317px}.dir-a-target{font-size:12px;color:#655f54;text-align:right;line-height:1.8}.dir-a-target span{display:block;color:#a19a8d;font-size:11px}.dir-a-foot{display:flex;justify-content:space-between;font-size:12px;color:#948e80;padding-top:11px}.dir-a-link{color:#9c4836!important}.dir-a-aside{padding-top:1px}.dir-a-aside-label{font-size:12px;letter-spacing:1px;color:#8f887a;text-transform:uppercase;padding-bottom:12px;border-bottom:1px solid #918c7e}.dir-a-preset{padding-top:18px}.dir-a-preset-number{font:11px Georgia,serif;color:#a44835;letter-spacing:1px}.dir-a-preset h2{font-size:17px;font-weight:600;line-height:1.3;margin:7px 0}.dir-a-preset p{font-size:11px;line-height:1.7;color:#867e70;margin:0}.dir-a-preset-meta{display:flex;justify-content:space-between;align-items:center;margin-top:15px;padding-bottom:19px;border-bottom:1px solid #ddd7cc;color:#8b8375;font-size:12px}.dir-a-preset-meta b{font-size:11px;color:#9c4836;font-weight:500}.dir-a-note{margin-top:15px;font-size:12px;line-height:1.65;color:#938a7b}.dir-a-note strong{display:block;font-weight:500;color:#5b574d;font-size:11px;margin-bottom:3px}
+</style>
+<div class="dir-a">
+<header class="dir-a-header"><div class="dir-a-brand">SkillDock<span style="color:#a44835">.</span></div><nav class="dir-a-nav"><b>书库</b><span>发现</span><span>预设</span><span>分发</span></nav><div class="dir-a-account"><i class="dir-a-dot"></i> 本地工作空间</div></header>
+<div class="dir-a-title"><div><h1>Skill 书库</h1><p>24 项技能 · 3 个来源 · 为你的 Agent 精心整理</p></div><button class="dir-a-action">＋ 归集已有 Skill</button></div>
+<div class="dir-a-body"><section><div class="dir-a-toolbar"><div class="dir-a-tabs"><b>全部 24</b><span>已分发 18</span><span>待整理 6</span></div><div class="dir-a-search"><svg viewBox="0 0 20 20"><circle cx="8" cy="8" r="5.5"/><path d="m12 12 5 5"/></svg>查找技能</div></div>
+<div class="dir-a-row"><div class="dir-a-number">01</div><div><div class="dir-a-name">find-skills</div><div class="dir-a-description">发现适合当前任务的技能 · vercel-labs / skills</div></div><div class="dir-a-target">Codex · Claude<span>通过软链接分发</span></div></div>
+<div class="dir-a-row"><div class="dir-a-number">02</div><div><div class="dir-a-name">frontend-design</div><div class="dir-a-description">让界面从可用，走向出色 · anthropics / skills</div></div><div class="dir-a-target">Claude Code<span>通过软链接分发</span></div></div>
+<div class="dir-a-row"><div class="dir-a-number">03</div><div><div class="dir-a-name">git-workflow</div><div class="dir-a-description">可追溯的分支与提交 · 本地文件夹</div></div><div class="dir-a-target">Codex<span>通过软链接分发</span></div></div>
+<div class="dir-a-row"><div class="dir-a-number">04</div><div><div class="dir-a-name">pdf</div><div class="dir-a-description">阅读、制作与检查文档 · anthropics / skills</div></div><div class="dir-a-target">尚未分发<span>可加入预设</span></div></div>
+<div class="dir-a-foot"><span>显示 1—4 / 24</span><span class="dir-a-link">浏览全部 →</span></div></section>
+<aside class="dir-a-aside"><div class="dir-a-aside-label">你的精选预设 / 03</div><div class="dir-a-preset"><div class="dir-a-preset-number">COLLECTION 01</div><h2>前端工作台</h2><p>从设计审视到交付验收，<br>把常用能力一次准备好。</p><div class="dir-a-preset-meta"><span>6 项技能</span><b>整体分发 ↗</b></div></div><div class="dir-a-note"><strong>一处收藏，处处可用</strong>统一保存在 SkillDock 书库。<br>集中管理来源与分发关系。</div></aside></div>
+</div>
+</div></div><div class="meta"><span>方向样机</span><button class="qmdp-pick-button" type="button">选择 A · 纸面书库</button></div></article>
+<article class="direction" data-design-option="B" data-name="石墨控制台"><div class="direction-title"><h2>B <span>石墨控制台</span></h2><button class="enlarge" type="button" data-enlarge="1" aria-label="放大方向 B">放大 ↗</button></div><div class="mock"><div class="stage" inert><style>
+.dir-b{width:800px;height:500px;display:grid;grid-template-columns:54px 1fr;grid-template-rows:48px 418px 34px;background:#191b1e;color:#edf0f2;font:14px -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;overflow:hidden;box-sizing:border-box}.dir-b *{box-sizing:border-box}.dir-b button{font:inherit;cursor:pointer}.dir-b .b-rail{grid-row:1/4;background:#141618;border-right:1px solid #303337;display:flex;align-items:center;flex-direction:column;gap:10px;padding-top:13px}.dir-b .b-mark{font:700 17px Menlo,monospace;color:#e1bc72;margin-bottom:19px}.dir-b .b-rail button{height:34px;width:34px;border:0;color:#9da4ac;background:none;border-radius:6px;display:grid;place-items:center}.dir-b .b-rail button:first-of-type{background:#34383e;color:#f2f4f5}.dir-b .b-rail svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.5}.dir-b .b-rail .b-settings{margin-top:auto;margin-bottom:15px}.dir-b .b-top{display:flex;align-items:center;gap:18px;padding:0 20px;border-bottom:1px solid #34373b;color:#c2c7ce}.dir-b .b-top strong{font:600 12px Menlo,monospace;letter-spacing:.2px}.dir-b .b-command{display:flex;align-items:center;gap:10px;color:#adb4be;margin-left:auto;width:294px;font-size:12px}.dir-b .b-command svg{height:14px;width:14px;stroke:currentColor;fill:none;stroke-width:1.6}.dir-b kbd{font:11px Menlo,monospace;border:1px solid #4b4f56;border-radius:3px;padding:2px 4px;color:#abb1ba;margin-left:auto}.dir-b .b-main{display:grid;grid-template-columns:456px 290px;min-height:0}.dir-b .b-list{padding:21px 0 0;border-right:1px solid #34373b}.dir-b .b-heading{padding:0 20px;display:flex;align-items:baseline;justify-content:space-between;margin-bottom:20px}.dir-b h2{font-size:22px;letter-spacing:-.5px;margin:0;font-weight:600}.dir-b .b-count{font:14px Menlo,monospace;color:#9da6af;margin-left:10px}.dir-b .b-import{background:none;border:1px solid #50565e;border-radius:4px;padding:6px 10px;color:#e3e6ea;font-size:12px}.dir-b .b-table-head{font-size:11px;color:#a3abb5;display:grid;grid-template-columns:1fr 86px 55px;padding:0 20px 9px;letter-spacing:.3px}.dir-b .b-row{height:45px;padding:0 20px;display:grid;grid-template-columns:1fr 86px 55px;align-items:center;position:relative;border-top:1px solid #2c3035;gap:3px}.dir-b .b-row.is-selected{background:#30343a}.dir-b .b-name{font:14px Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#e0e5eb}.dir-b .b-row.is-selected .b-name{color:#f8f9fa}.dir-b .b-origin{font:11px Menlo,monospace;color:#a7b0ba}.dir-b .b-target{font:11px Menlo,monospace;color:#b9c3cd;display:flex;align-items:center;gap:7px}.dir-b .b-dot{height:5px;width:5px;border-radius:50%;background:#a9c7ac;display:inline-block;flex-shrink:0}.dir-b .b-dot.muted{background:#69727d}.dir-b .b-listfoot{padding:11px 20px;font-size:11px;color:#a5adb6;display:flex;justify-content:space-between}.dir-b .b-listfoot span:last-child{font-family:Menlo,monospace}.dir-b .b-inspector{background:#1e2125;padding:18px 19px;position:relative;display:flex;flex-direction:column}.dir-b .b-eyebrow{color:#a9b0ba;font:11px Menlo,monospace;letter-spacing:1.2px;display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}.dir-b .b-eyebrow span{color:#d2b171;letter-spacing:0;border:1px solid #60513a;border-radius:3px;font-size:10px;padding:3px 5px}.dir-b h3{font:600 17px Menlo,monospace;letter-spacing:-.6px;margin:0 0 7px}.dir-b .b-desc{font-size:12px;color:#b7bec7;line-height:1.5;margin:0 0 10px}.dir-b .b-meta{display:grid;grid-template-columns:52px 1fr;gap:7px 7px;font-size:11px;padding-bottom:12px;border-bottom:1px solid #3a3e45}.dir-b .b-meta .b-key{color:#a3acb7}.dir-b .b-meta .b-value{font:11px Menlo,monospace;color:#d0d7e0;align-self:center}.dir-b .b-meta .b-value.b-amber{color:#e1bc72}.dir-b .b-detail-title{font-size:11px;margin:12px 0 9px;color:#abb3bd;display:flex;justify-content:space-between}.dir-b .b-detail-title span{font:11px Menlo,monospace}.dir-b .b-agent{display:flex;align-items:center;gap:8px;font:11px Menlo,monospace;margin-bottom:7px}.dir-b .b-agent small{font:10px -apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif;color:#aab4bf;margin-left:auto}.dir-b .b-distribute{margin-top:auto;width:100%;padding:10px 12px;border:1px solid #dfbf7c;background:#debd79;border-radius:4px;color:#212326;font-size:12px;font-weight:600;display:flex;justify-content:space-between}.dir-b .b-bottom{display:flex;gap:17px;align-items:center;background:#151719;border-top:1px solid #34373b;padding:0 17px;font:11px Menlo,monospace;color:#b0b9c5}.dir-b .b-bottom span{display:flex;align-items:center;gap:6px}.dir-b .b-bottom .b-status{margin-left:auto;color:#9aa4b1;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif}.dir-b button:hover{filter:brightness(1.15)}
+</style>
+<div class="dir-b">
+  <aside class="b-rail"><div class="b-mark">[s]</div><button aria-label="技能库"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="7" rx="1.5"/><rect x="14" y="4" width="7" height="7" rx="1.5"/><rect x="3" y="15" width="7" height="7" rx="1.5"/><rect x="14" y="15" width="7" height="7" rx="1.5"/></svg></button><button aria-label="发现"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m15 9-2 4-4 2 2-4z"/></svg></button><button aria-label="预设"><svg viewBox="0 0 24 24"><path d="m3 8 9-5 9 5-9 5zM3 12l9 5 9-5M3 16l9 5 9-5"/></svg></button><button aria-label="更新"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14-5L3 9m0-6v6h6M4 13a8 8 0 0 0 14 5l3-3m0 6v-6h-6"/></svg></button><button class="b-settings" aria-label="设置"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="#141618"/><circle cx="15" cy="17" r="3" fill="#141618"/></svg></button></aside>
+  <header class="b-top"><strong>SKILLDOCK</strong><span style="font:11px Menlo,monospace;color:#929da9">/ local</span><div class="b-command"><svg viewBox="0 0 20 20"><circle cx="8" cy="8" r="5.5"/><path d="m12 12 5 5"/></svg><span>搜索技能、来源或命令</span><kbd>⌘ K</kbd></div></header>
+  <main class="b-main"><section class="b-list"><div class="b-heading"><h2>技能库<span class="b-count">24</span></h2><button class="b-import">＋ 导入</button></div><div class="b-table-head"><span>名称</span><span>来源</span><span>已分发</span></div><div class="b-row is-selected"><span class="b-name">frontend-design</span><span class="b-origin">GitHub</span><span class="b-target"><i class="b-dot"></i>3</span></div><div class="b-row"><span class="b-name">code-review</span><span class="b-origin">GitHub</span><span class="b-target"><i class="b-dot"></i>2</span></div><div class="b-row"><span class="b-name">find-skills</span><span class="b-origin">Skills.sh</span><span class="b-target"><i class="b-dot"></i>3</span></div><div class="b-row"><span class="b-name">writing-plans</span><span class="b-origin">GitHub</span><span class="b-target"><i class="b-dot"></i>1</span></div><div class="b-row"><span class="b-name">systematic-debugging</span><span class="b-origin">GitHub</span><span class="b-target"><i class="b-dot"></i>2</span></div><div class="b-row"><span class="b-name">api-documentation</span><span class="b-origin">本地导入</span><span class="b-target"><i class="b-dot muted"></i>—</span></div><div class="b-row"><span class="b-name">test-driven-development</span><span class="b-origin">ClawHub</span><span class="b-target"><i class="b-dot"></i>1</span></div><div class="b-listfoot"><span>按名称排序</span><span>7 / 24 ↓</span></div></section>
+  <aside class="b-inspector"><div class="b-eyebrow">SKILL INSPECTOR<span>已安装</span></div><h3>frontend-design</h3><p class="b-desc">构建有辨识度的前端界面，<br>从设计判断到可交付代码。</p><div class="b-meta"><span class="b-key">GitHub</span><span class="b-value">anthropics / skills ↗</span><span class="b-key">版本</span><span class="b-value">a83f20c · main</span><span class="b-key">更新</span><span class="b-value b-amber">每 24 小时跟随来源</span></div><div class="b-detail-title">分发目标<span>3 CONNECTED</span></div><div class="b-agent"><i class="b-dot"></i>Codex<small>手动分发</small></div><div class="b-agent"><i class="b-dot"></i>Claude Code<small>前端开发预设</small></div><div class="b-agent"><i class="b-dot"></i>Cursor<small>前端开发预设</small></div><button class="b-distribute"><span>分发到…</span><span>↗</span></button></aside></main>
+  <footer class="b-bottom"><span><i class="b-dot"></i>Codex</span><span><i class="b-dot"></i>Claude Code</span><span><i class="b-dot"></i>Cursor</span><span class="b-status">软链分发</span></footer>
+</div>
+</div></div><div class="meta"><span>方向样机</span><button class="qmdp-pick-button" type="button">选择 B · 石墨控制台</button></div></article>
+<article class="direction" data-design-option="C" data-name="工业档案"><div class="direction-title"><h2>C <span>工业档案</span></h2><button class="enlarge" type="button" data-enlarge="2" aria-label="放大方向 C">放大 ↗</button></div><div class="mock"><div class="stage" inert><style>
+.dir-c{box-sizing:border-box;width:800px;height:500px;overflow:hidden;background:#e9e7df;color:#20211e;font-family:'Helvetica Neue','PingFang SC',sans-serif;font-size:14px;padding:22px 27px}.dir-c *{box-sizing:border-box}.dir-c header{display:flex;justify-content:space-between;align-items:flex-end;padding-bottom:16px;border-bottom:3px solid #22231f}.dir-c .brand{display:flex;align-items:center;gap:10px;font-size:26px;font-weight:700;letter-spacing:-1.2px}.dir-c .mark{width:26px;height:25px;display:grid;grid-template-columns:repeat(3,6px);gap:3px;transform:skewY(-10deg)}.dir-c .mark i{display:block;background:#20211e}.dir-c .edition{text-align:right;font-size:10px;line-height:1.6;font-family:Menlo,monospace;letter-spacing:.5px}.dir-c nav{height:45px;display:flex;gap:32px;align-items:center;border-bottom:1px solid #85877d;font-weight:600;font-size:12px}.dir-c nav span{height:45px;display:flex;align-items:center;gap:8px}.dir-c nav span:first-child{border-bottom:3px solid #e65629}.dir-c nav b{font:10px Menlo,monospace;color:#75776e}.dir-c .overview{display:grid;grid-template-columns:1fr 1fr;margin-top:20px;border-bottom:2px solid #252720;padding-bottom:19px}.dir-c .block{padding-right:22px}.dir-c .block+.block{border-left:1px solid #8e9086;padding-left:23px;padding-right:0}.dir-c .heading{display:flex;gap:12px;align-items:center;font-size:17px;font-weight:600}.dir-c .number{font:12px Menlo,monospace;border:1px solid #34362e;width:28px;height:26px;display:grid;place-items:center}.dir-c .summary{display:flex;justify-content:space-between;align-items:baseline;margin:16px 0 13px}.dir-c .summary strong{font-size:29px;font-weight:600;letter-spacing:-1px}.dir-c .summary p{margin:0;font-size:12px;color:#5c5f55}.dir-c .path{font:11px Menlo,monospace;display:flex;align-items:center;gap:7px;padding-bottom:13px}.dir-c .path i{font-style:normal;color:#787b70;font-size:14px}.dir-c .action{border:0;background:#e65629;color:#161814;font-size:12px;font-weight:600;padding:10px 12px;width:100%;text-align:left;display:flex;justify-content:space-between;cursor:pointer}.dir-c .secondary{background:transparent;border:1px solid #373930;padding:9px 12px}.dir-c .preset{display:flex;justify-content:space-between;align-items:center;margin:19px 0 13px;font-size:14px;font-weight:600}.dir-c .preset small{font:11px Menlo,monospace;color:#62665a}.dir-c .targets{display:flex;align-items:center;gap:9px;padding-bottom:13px;font-size:11px}.dir-c .target{border:1px solid #828579;padding:3px 7px}.dir-c .targets .arrow{margin-right:auto;color:#75796b}.dir-c .register-head{display:flex;justify-content:space-between;align-items:center;margin:16px 0 11px}.dir-c .register-head strong{font-size:14px}.dir-c .register-head span{font:10px Menlo,monospace;color:#5f6256}.dir-c table{width:100%;border-collapse:collapse;text-align:left;font-size:12px}.dir-c th{font-weight:400;font-size:10px;color:#65695e;padding:0 0 6px;border-bottom:1px solid #92958a}.dir-c td{padding:9px 0;border-bottom:1px solid #b8bbaf}.dir-c td:first-child{font:10px Menlo,monospace;color:#7d8174;width:30px}.dir-c td:nth-child(2){font-weight:600;width:270px}.dir-c td:nth-child(3){font:10px Menlo,monospace}.dir-c td:last-child{text-align:right;font-size:10px}.dir-c .dot{width:5px;height:5px;display:inline-block;background:#5f7555;margin-right:6px;vertical-align:2px}.dir-c footer{display:flex;justify-content:space-between;align-items:center;padding-top:10px;font:9px Menlo,monospace;color:#64685b}.dir-c footer .status{font-family:'Helvetica Neue','PingFang SC',sans-serif;font-size:10px}
+
+.dir-c{padding:22px 25px}.dir-c header{padding-bottom:12px}.dir-c .brand{font-size:25px;line-height:29px}.dir-c nav,.dir-c nav span{height:42px}.dir-c .overview{margin-top:18px;padding-bottom:16px}.dir-c .heading{font-size:16px;line-height:26px}.dir-c .number{height:23px;width:25px;font-size:11px}.dir-c .summary{margin:14px 0 12px}.dir-c .summary strong{font-size:26px;line-height:32px}.dir-c .path{font-size:10px;padding-bottom:12px;line-height:12px}.dir-c .action{height:34px;padding:8px 10px;font-size:11px}.dir-c .secondary{padding:7px 10px}.dir-c .preset{margin:14px 0 11px;line-height:18px}.dir-c .targets{height:35px;padding-bottom:10px}.dir-c .register-head{margin:14px 0 10px;line-height:17px}.dir-c th{padding-bottom:5px;line-height:12px}.dir-c td{padding:7px 0;line-height:14px}.dir-c footer{padding-top:9px;line-height:12px}
+</style>
+<div class="dir-c">
+<header><div class="brand"><span class="mark"><i></i><i></i><i></i><i></i><i></i></span>SkillDock<span style="font-size:10px;letter-spacing:0;margin:10px 0 0 3px;font-weight:400">技能档案室</span></div><div class="edition">LOCAL WORKSPACE / 001<br>24 RECORDS · 04 TARGETS</div></header>
+<nav><span><b>01</b> 技能库</span><span><b>02</b> 发现</span><span><b>03</b> 预设</span><span><b>04</b> 分发目标</span><span><b>05</b> 更新记录</span><span style="margin-left:auto"><b>06</b> 设置 ↗</span></nav>
+<div class="overview">
+<section class="block"><div class="heading"><span class="number">01</span>归集散落的 Skill</div><div class="summary"><strong>03<span style="font-size:12px;letter-spacing:0;margin-left:9px;font-weight:400">个待归集目录</span></strong><p>保留原位软链</p></div><div class="path"><span>散落目录</span><i>→</i><span>统一技能库</span><i>→</i><span>软链回原位</span></div><button class="action">扫描已有 Skill <span>↗</span></button></section>
+<section class="block"><div class="heading"><span class="number">02</span>按预设分发</div><div class="preset">前端开发 <small>06 SKILLS</small></div><div class="targets"><span class="arrow">整体同步 →</span><span class="target">Codex</span><span class="target">Cursor</span></div><button class="action secondary">管理此预设 <span>→</span></button></section>
+</div>
+<div class="register-head"><strong>技能记录 <span style="font-weight:400;color:#717569;margin-left:6px">/ 24</span></strong><span>名称 A—Z &nbsp; ↓ &nbsp;&nbsp; 搜索档案 ⌘ K</span></div>
+<table><thead><tr><th>NO.</th><th>名称</th><th>来源</th><th style="text-align:right">分发状态</th></tr></thead><tbody><tr><td>01</td><td>frontend-design</td><td>anthropics / skills</td><td><i class="dot"></i>Codex · Cursor</td></tr><tr><td>02</td><td>git-commit</td><td>本地目录</td><td><i class="dot"></i>Codex</td></tr><tr><td>03</td><td>find-skills</td><td>vercel-labs / skills</td><td style="color:#74786b">尚未分发</td></tr></tbody></table>
+<footer><span>STORE / ~/.local/share/skilldock</span><span class="status"><i class="dot"></i>按目标管理软链接</span></footer>
+</div>
+</div></div><div class="meta"><span>方向样机</span><button class="qmdp-pick-button" type="button">选择 C · 工业档案</button></div></article>
+<article class="direction" data-design-option="D" data-name="原生工作间"><div class="direction-title"><h2>D <span>原生工作间</span><b>推荐</b></h2><button class="enlarge" type="button" data-enlarge="3" aria-label="放大方向 D">放大 ↗</button></div><div class="mock"><div class="stage" inert><style>
+.dir-d{width:800px;height:500px;display:grid;grid-template-columns:162px 1fr;background:#fff;color:#29332e;font:14px/1.5 -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;overflow:hidden}.dir-d *{box-sizing:border-box}.dir-d-side{background:#edf0ed;padding:21px 12px;display:flex;flex-direction:column;border-right:1px solid #dde2dd}.dir-d-brand{font-family:'Avenir Next',sans-serif;font-size:20px;font-weight:600;letter-spacing:-.8px;display:flex;align-items:center;gap:8px;padding:0 7px 27px}.dir-d-logo{display:grid;place-items:center;width:26px;height:28px;border-radius:7px;background:#3e6652;color:white;box-shadow:inset 0 1px 0 #ffffff50,0 2px 3px #34463722}.dir-d-nav{padding:8px 10px;display:flex;gap:9px;border-radius:6px;margin-bottom:3px;font-size:14px}.dir-d-nav svg{width:17px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6}.dir-d-nav-active{background:#fff;font-weight:600;box-shadow:0 1px 3px #1e392a14}.dir-d-cap{font-size:11px;color:#677269;font-weight:600;margin:23px 10px 6px}.dir-d-tail{margin-top:auto}.dir-d-main{display:flex;flex-direction:column;min-width:0}.dir-d-toolbar{height:59px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:0 24px;border-bottom:1px solid #edf0ec}.dir-d-crumb{font-weight:600}.dir-d-path{font-size:12px;color:#657068}.dir-d-heading{display:flex;justify-content:space-between;align-items:center;padding:23px 24px 18px}.dir-d-heading h1{margin:0;font-size:27px;font-weight:600;letter-spacing:-.5px}.dir-d-heading p{margin:3px 0 0;color:#68736c;font-size:13px}.dir-d-button{border:1px solid #325c47;background:#416e54;color:#fff;border-radius:7px;padding:8px 13px;font-size:13px;font-weight:500;box-shadow:inset 0 1px 0 #ffffff22,0 1px 2px #1f392526;white-space:nowrap}.dir-d-filter{margin:0 24px 16px;display:flex;gap:10px;align-items:center}.dir-d-search{display:flex;justify-content:space-between;flex:1;padding:7px 10px;border:1px solid #dce2dc;border-radius:6px;color:#737d76;font-size:13px;box-shadow:0 1px 2px #263e2810}.dir-d-segment{background:#edf0ed;border-radius:6px;display:flex;padding:3px;gap:3px;font-size:12px}.dir-d-segment span{padding:3px 8px}.dir-d-segment span:first-child{background:white;border-radius:4px;box-shadow:0 1px 2px #1b2c211a}.dir-d-table{margin:0 15px}.dir-d-row{display:grid;grid-template-columns:28px minmax(0,1fr) 113px 97px;align-items:center;min-height:54px;padding:0 10px;gap:8px;border-radius:6px}.dir-d-row-head{min-height:28px;font-size:11px;color:#6c776f}.dir-d-row-selected{background:#eaf0e9}.dir-d-checkbox{width:13px;height:13px;border:1px solid #bac5ba;border-radius:3px;display:inline-flex;align-items:center;justify-content:center;font-size:10px}.dir-d-row-selected .dir-d-checkbox{background:#477054;color:#fff;border-color:#477054}.dir-d-name{font-size:14px;font-weight:500}.dir-d-description{font-size:11px;color:#637167;margin-top:1px}.dir-d-source{font-size:12px;color:#56635b}.dir-d-target{font-size:11px;color:#46614e}.dir-d-footer{margin-top:auto;padding:13px 24px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid #e4eae3;background:#fafbf9;font-size:12px;color:#5c6a5f}.dir-d-selection{font-weight:500;color:#2c4434}.dir-d-footer button{border:1px solid #c9d4c8;background:#fff;padding:6px 10px;border-radius:6px;color:#294b34;font-size:12px;font-weight:500;box-shadow:0 1px 2px #233b2310}
+</style>
+<div class="dir-d">
+ <aside class="dir-d-side"><div class="dir-d-brand"><span class="dir-d-logo">▱</span>SkillDock</div>
+ <div class="dir-d-nav dir-d-nav-active"><svg viewBox="0 0 20 20"><path d="M3 4h14v13H3zM3 8h14M7 11h6"/></svg>Skill 库</div>
+ <div class="dir-d-nav"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="7"/><path d="m13 7-2 4-4 2 2-4z"/></svg>发现</div>
+ <div class="dir-d-nav"><svg viewBox="0 0 20 20"><path d="m3 7 7-4 7 4-7 4zM3 11l7 4 7-4M3 15l7 4 7-4"/></svg>预设</div>
+ <div class="dir-d-cap">工作空间</div><div class="dir-d-nav">归集与导入</div><div class="dir-d-nav">分发目标</div><div class="dir-d-nav">来源与更新</div>
+ <div class="dir-d-tail"><div class="dir-d-nav">任务记录</div><div class="dir-d-nav">设置</div></div></aside>
+ <main class="dir-d-main"><header class="dir-d-toolbar"><span class="dir-d-crumb">我的资料库</span><span class="dir-d-path">本地 · 默认目录</span></header>
+ <div class="dir-d-heading"><div><h1>Skill 库 <span style="color:#869187;font-size:19px;font-weight:400">24</span></h1><p>集中保管，随处使用。</p></div><button class="dir-d-button">＋ 添加 Skill</button></div>
+ <div class="dir-d-filter"><div class="dir-d-search"><span>搜索名称、描述或来源</span><span>⌘ K</span></div><div class="dir-d-segment"><span>全部</span><span>已分发</span></div></div>
+ <div class="dir-d-table"><div class="dir-d-row dir-d-row-head"><span></span><span>名称</span><span>来源</span><span>分发至</span></div>
+ <div class="dir-d-row dir-d-row-selected"><span class="dir-d-checkbox">✓</span><div><div class="dir-d-name">frontend-design</div><div class="dir-d-description">创建有辨识度的产品界面</div></div><span class="dir-d-source">anthropics/skills</span><span class="dir-d-target">Claude Code +1</span></div>
+ <div class="dir-d-row"><span class="dir-d-checkbox"></span><div><div class="dir-d-name">find-skills</div><div class="dir-d-description">发现适合当前任务的技能</div></div><span class="dir-d-source">Skills.sh</span><span class="dir-d-target">Codex</span></div>
+ <div class="dir-d-row"><span class="dir-d-checkbox"></span><div><div class="dir-d-name">git-workflow</div><div class="dir-d-description">分支、提交与代码审查</div></div><span class="dir-d-source">本地导入</span><span class="dir-d-target">Codex +1</span></div>
+ <div class="dir-d-row"><span class="dir-d-checkbox"></span><div><div class="dir-d-name">pdf</div><div class="dir-d-description">阅读、生成与检查 PDF</div></div><span class="dir-d-source">anthropics/skills</span><span class="dir-d-target">未分发</span></div></div>
+ <footer class="dir-d-footer"><span class="dir-d-selection">已选择 1 项</span><div>加入预设　 <button>分发到…</button></div></footer>
+ </main>
+</div>
+</div></div><div class="meta"><span>方向样机</span><button class="qmdp-pick-button" type="button">选择 D · 原生工作间</button></div></article></main>
+<section class="explanations"><p class="recommendation">推荐 D · 原生工作间：适合长期使用，列表便于扫读，归集与批量分发更顺手。</p><div class="details"><section><h3>A · 像一份精心整理的藏书目录</h3><p>暖纸与砖红，Georgia 英文品牌与中文系统字体。横向导航、目录行与旁栏预设；更重阅读，留白较多。</p></section><section><h3>B · 像一间专注的开发控制室</h3><p>石墨底与琥珀重音，Menlo 等宽信息。紧凑工具轨道、列表与检查器；适合频繁查看来源和目标。</p></section><section><h3>C · 像一柜井然有序的工业档案</h3><p>米灰与信号橙，Helvetica Neue 无衬线排版。模块编号、横向操作带与档案表；以归集和分发两件事组织界面。</p></section><section><h3>D · 像一款熟悉的本地文件工具</h3><p>白底、鼠尾草灰与深绿，Avenir Next 英文品牌与中文系统字体。窄导航、单层工具栏、清晰选中行和批量操作栏。</p></section></div><p class="mix">也可以混搭：在确认弹层中写下想保留的配色、布局或细节。</p></section>
+<dialog class="zoom-dialog"><div class="zoom-head"><strong id="zoom-title"></strong><button type="button" id="close-zoom">关闭</button></div><div class="zoom-body"></div></dialog>
+<script>
+const stages = [...document.querySelectorAll('.mock')];
+const resize = () => stages.forEach(mock => mock.querySelector('.stage').style.transform = 'scale(' + mock.clientWidth / 800 + ')');
+new ResizeObserver(resize).observe(document.querySelector('.grid')); resize();
+const zoomDialog = document.querySelector('.zoom-dialog');
+document.querySelectorAll('[data-enlarge]').forEach(button => button.addEventListener('click', () => {
+ const card = button.closest('.direction');
+ document.querySelector('#zoom-title').textContent = card.dataset.designOption + ' · ' + card.dataset.name;
+ const clone = card.querySelector('.stage').cloneNode(true); clone.className = 'zoom-stage'; clone.removeAttribute('style');
+ document.querySelector('.zoom-body').replaceChildren(clone); zoomDialog.showModal();
+}));
+document.querySelector('#close-zoom').onclick = () => zoomDialog.close();
+</script>
+<!-- QIAOMU_DESIGN_PREVIEW_BRIDGE -->
+<script>
+(() => {
+  const optionSelector = '[data-design-option],[data-option],[data-choice],[data-direction],.card[data-name],article.option,.option[data-name],.option';
+  const optionLetters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  let pendingSelection = null; let pendingElement = null; let returnFocus = null;
+
+  const style = document.createElement('style');
+  style.textContent = `
+    :root { --qmdp-topbar-h: 58px; --qmdp-dials-h: 78px; --qmdp-shell-h: calc(var(--qmdp-topbar-h) + var(--qmdp-dials-h)); }
+    body.qmdp-preview-active { padding-top: var(--qmdp-shell-h) !important; }
+    body.qmdp-preview-compact { --qmdp-shell-h: var(--qmdp-topbar-h); }
+    .qmdp-frame {
+      position: fixed;
+      inset: 0 0 auto 0;
+      z-index: 2147483000;
+      height: var(--qmdp-topbar-h);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 0 18px;
+      color: #191b21;
+      background: color-mix(in srgb, #fbfbfa 94%, transparent);
+      border-bottom: 1px solid #d8dbe1;
+      box-shadow: 0 10px 30px rgb(15 23 42 / 8%);
+      backdrop-filter: blur(16px) saturate(1.15);
+      font: 500 13px/1.3 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    .qmdp-frame strong { font-size: 14px; font-weight: 750; }
+    .qmdp-frame-left, .qmdp-frame-right { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+    .qmdp-frame-title { display: inline-flex; align-items: center; gap: 9px; min-width: 0; }
+    .qmdp-dot { width: 9px; height: 9px; border-radius: 999px; background: #168a5f; box-shadow: 0 0 0 4px rgb(22 138 95 / 12%); }
+    .qmdp-key { border: 1px solid #d8dbe1; border-radius: 7px; background: #fff; padding: 5px 8px; color: #4e5665; font-weight: 650; }
+    .qmdp-dials {
+      position: fixed;
+      inset: var(--qmdp-topbar-h) 0 auto 0;
+      z-index: 2147482999;
+      height: var(--qmdp-dials-h);
+      display: grid;
+      grid-template-columns: repeat(3, minmax(160px, 1fr));
+      gap: 14px;
+      align-items: center;
+      padding: 10px 18px 12px;
+      background: color-mix(in srgb, #fbfbfa 95%, transparent);
+      border-bottom: 1px solid #d8dbe1;
+      box-shadow: 0 12px 26px rgb(15 23 42 / 6%);
+      backdrop-filter: blur(16px) saturate(1.12);
+      font: 500 12px/1.25 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    .qmdp-dial { display: grid; gap: 7px; color: #4e5665; min-width: 0; }
+    .qmdp-dial-head { display: flex; justify-content: space-between; gap: 10px; color: #191b21; font-weight: 700; }
+    .qmdp-dial output { font-variant-numeric: tabular-nums; color: #168a5f; }
+    .qmdp-dial input { width: 100%; accent-color: #191b21; }
+    .qmdp-pick-button {
+      position: relative;
+      z-index: 2;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      width: 100%;
+      margin-top: 14px;
+      border: 1px solid #191b21;
+      border-radius: 8px;
+      background: #191b21;
+      color: #fff;
+      font: 750 14px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+      white-space: normal;
+      writing-mode: horizontal-tb;
+      cursor: pointer;
+      transition: transform 140ms cubic-bezier(.23,1,.32,1), background 140ms cubic-bezier(.23,1,.32,1), box-shadow 140ms cubic-bezier(.23,1,.32,1);
+    }
+    .qmdp-pick-button:hover { transform: translateY(-1px); box-shadow: 0 10px 24px rgb(15 23 42 / 16%); }
+    .qmdp-pick-button:active { transform: translateY(0) scale(.99); }
+    .qmdp-pick-button:focus-visible { outline: 3px solid rgb(94 106 210 / 28%); outline-offset: 2px; }
+    .qmdp-selected { outline: 3px solid rgb(25 27 33 / 78%) !important; outline-offset: 3px !important; }
+    .qmdp-selected .qmdp-pick-button { background: #168a5f; border-color: #168a5f; }
+    body.qmdp-preview-active :is([data-design-option],[data-option],[data-choice],[data-direction],.card[data-name],article.option,.option[data-name],.option) {
+      min-width: 0;
+    }
+    body.qmdp-preview-active :is([data-design-option],[data-option],[data-choice],[data-direction],.card[data-name],article.option,.option[data-name],.option) > :is(p,.meta,.option-desc,.direction-summary,.qmdp-card-meta,.description,.summary) {
+      grid-column: 1 / -1 !important;
+      align-self: stretch;
+      min-width: min(240px, 100%) !important;
+      max-width: 100% !important;
+      writing-mode: horizontal-tb !important;
+      white-space: normal !important;
+      overflow-wrap: break-word;
+      word-break: normal;
+      line-height: 1.55;
+    }
+    body.qmdp-preview-active :is([data-design-option],[data-option],[data-choice],[data-direction],.card[data-name],article.option,.option[data-name],.option) > .qmdp-pick-button {
+      grid-column: 1 / -1 !important;
+      align-self: stretch;
+    }
+    .qmdp-confirm {
+      position: fixed;
+      inset: 0;
+      z-index: 2147483002;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: rgb(15 18 26 / 38%);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 140ms cubic-bezier(.23,1,.32,1);
+    }
+    .qmdp-confirm.open { opacity: 1; pointer-events: auto; }
+    .qmdp-dialog {
+      width: min(520px, calc(100vw - 32px));
+      border: 1px solid rgb(25 27 33 / 12%);
+      border-radius: 12px;
+      background: #fff;
+      color: #191b21;
+      padding: 20px;
+      box-shadow: 0 28px 80px rgb(15 23 42 / 28%);
+      font: 500 14px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+      transform: translateY(8px) scale(.98);
+      transition: transform 140ms cubic-bezier(.23,1,.32,1);
+    }
+    .qmdp-confirm.open .qmdp-dialog { transform: translateY(0) scale(1); }
+    .qmdp-dialog h2 { margin: 0 0 8px; font-size: 18px; line-height: 1.25; letter-spacing: 0; }
+    .qmdp-dialog p { margin: 0 0 14px; color: #596171; }
+    .qmdp-adjustments {
+      box-sizing: border-box;
+      width: 100%;
+      min-height: 88px;
+      resize: vertical;
+      border: 1px solid #d8dbe1;
+      border-radius: 10px;
+      padding: 11px 12px;
+      color: #191b21;
+      font: inherit;
+      outline: none;
+    }
+    .qmdp-adjustments:focus { border-color: #191b21; box-shadow: 0 0 0 3px rgb(25 27 33 / 10%); }
+    .qmdp-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+    .qmdp-action {
+      border: 1px solid #d8dbe1;
+      border-radius: 8px;
+      background: #fff;
+      color: #191b21;
+      min-height: 38px;
+      padding: 0 14px;
+      font: 750 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+      cursor: pointer;
+    }
+    .qmdp-action.primary { border-color: #191b21; background: #191b21; color: #fff; }
+    .qmdp-action:focus-visible { outline: 3px solid rgb(94 106 210 / 28%); outline-offset: 2px; }
+    .qmdp-toast {
+      position: fixed;
+      left: 50%;
+      bottom: 18px;
+      z-index: 2147483001;
+      max-width: min(620px, calc(100vw - 28px));
+      transform: translate(-50%, 18px);
+      opacity: 0;
+      border: 1px solid rgb(25 27 33 / 12%);
+      border-radius: 10px;
+      background: #191b21;
+      color: #fff;
+      padding: 12px 14px;
+      box-shadow: 0 18px 48px rgb(15 23 42 / 24%);
+      font: 650 14px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+      transition: transform 180ms cubic-bezier(.23,1,.32,1), opacity 180ms cubic-bezier(.23,1,.32,1);
+      pointer-events: none;
+    }
+    .qmdp-toast.show { transform: translate(-50%, 0); opacity: 1; }
+    @media (max-width: 720px) {
+      :root { --qmdp-topbar-h: 88px; --qmdp-dials-h: 156px; }
+      .qmdp-frame { align-items: flex-start; flex-direction: column; justify-content: center; gap: 8px; padding: 10px 14px; }
+      .qmdp-frame-right { flex-wrap: wrap; }
+      .qmdp-dials { grid-template-columns: 1fr; gap: 8px; padding: 10px 14px; }
+      .qmdp-dial { gap: 4px; }
+    }
+  `;
+  document.head.appendChild(style);
+
+  function ensureShell() {
+    if (document.querySelector('.qmdp-frame')) return;
+    document.body.classList.add('qmdp-preview-active');
+    const hasNativeDials = Boolean(document.querySelector('[data-qmdp-dials], .qmdp-dials, [data-qmdp-dial]'));
+    if (hasNativeDials) document.body.classList.add('qmdp-preview-compact');
+    const frame = document.createElement('div');
+    frame.className = 'qmdp-frame';
+    frame.innerHTML = `
+      <div class="qmdp-frame-left">
+        <span class="qmdp-dot" aria-hidden="true"></span>
+        <span class="qmdp-frame-title"><strong>设计方向预览</strong></span>
+      </div>
+      <div class="qmdp-frame-right" aria-label="选择快捷键">
+        <span class="qmdp-key">1 A</span><span class="qmdp-key">2 B</span><span class="qmdp-key">3 C</span><span class="qmdp-key">4 D</span>
+      </div>`;
+    const dials = document.createElement('div');
+    dials.className = 'qmdp-dials';
+    dials.dataset.qmdpInjected = 'true';
+    dials.setAttribute('aria-label', '设计拨盘');
+    dials.innerHTML = `
+      <label class="qmdp-dial">
+        <span class="qmdp-dial-head"><span>视觉冒险度</span><output data-qmdp-output="variance">7</output></span>
+        <input data-qmdp-dial="variance" type="range" min="1" max="10" value="7">
+      </label>
+      <label class="qmdp-dial">
+        <span class="qmdp-dial-head"><span>动效强度</span><output data-qmdp-output="motion">6</output></span>
+        <input data-qmdp-dial="motion" type="range" min="1" max="10" value="6">
+      </label>
+      <label class="qmdp-dial">
+        <span class="qmdp-dial-head"><span>信息密度</span><output data-qmdp-output="density">5</output></span>
+        <input data-qmdp-dial="density" type="range" min="1" max="10" value="5">
+      </label>`;
+    const confirm = document.createElement('div');
+    confirm.className = 'qmdp-confirm';
+    confirm.setAttribute('role', 'dialog');
+    confirm.setAttribute('aria-modal', 'true'); confirm.setAttribute('aria-hidden', 'true');
+    confirm.setAttribute('aria-labelledby', 'qmdp-confirm-title');
+    confirm.innerHTML = `
+      <div class="qmdp-dialog">
+        <h2 id="qmdp-confirm-title">确认设计方向</h2>
+        <p data-qmdp-confirm-meta></p>
+        <textarea class="qmdp-adjustments" placeholder="可选：写下调整建议，比如更稳一点、要 B 的字体 + C 的配色"></textarea>
+        <div class="qmdp-actions">
+          <button class="qmdp-action" type="button" data-qmdp-cancel>取消</button>
+          <button class="qmdp-action primary" type="button" data-qmdp-confirm>确认并回传</button>
+        </div>
+      </div>`;
+    const toast = document.createElement('div');
+    toast.className = 'qmdp-toast';
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-live', 'polite');
+    const nodes = [frame];
+    if (!hasNativeDials) nodes.push(dials);
+    nodes.push(confirm, toast);
+    document.body.append(...nodes);
+    bindDialOutputs();
+    confirm.querySelector('[data-qmdp-cancel]').addEventListener('click', closeConfirm);
+    confirm.querySelector('[data-qmdp-confirm]').addEventListener('click', confirmPending);
+    confirm.addEventListener('click', event => {
+      if (event.target === confirm) closeConfirm();
+    });
+  }
+
+  function showToast(message) {
+    const toast = document.querySelector('.qmdp-toast');
+    if (!toast) return;
+    toast.textContent = message;
+    toast.classList.add('show');
+  }
+
+  function bindDialOutputs() {
+    document.querySelectorAll('[data-qmdp-dial]').forEach(input => {
+      const outputs = document.querySelectorAll('[data-qmdp-output="' + input.dataset.qmdpDial + '"]');
+      const sync = () => {
+        input.setAttribute('aria-valuenow', input.value);
+        outputs.forEach(output => {
+          output.value = input.value;
+          output.textContent = input.value;
+        });
+      };
+      input.addEventListener('input', sync);
+      sync();
+    });
+  }
+
+  function dialInput(key) {
+    return document.querySelector('[data-qmdp-dial="' + key + '"], #' + key + ', [name="' + key + '"], [data-dial="' + key + '"]');
+  }
+
+  function readDials() {
+    const value = (key, fallback) => {
+      const input = dialInput(key);
+      const number = Number(input?.value);
+      return Number.isFinite(number) ? number : fallback;
+    };
+    return {variance: value('variance', 7), motion: value('motion', 6), density: value('density', 5)};
+  }
+
+  function formatDials(values) {
+    return '视觉冒险度 ' + values.variance + ' / 动效强度 ' + values.motion + ' / 信息密度 ' + values.density;
+  }
+
+  function normalizePayload(payload = {}) {
+    const id = payload.id || payload.key || payload.label || '';
+    const name = payload.name || payload.title || '';
+    const label = payload.label || (id && name ? '选 ' + id + '：' + name : id || name || '当前方向');
+    return {...payload, id, name, label};
+  }
+
+  function selectionText(payload) {
+    const values = payload.dials || readDials();
+    const advice = payload.adjustments ? '；建议：' + payload.adjustments : '';
+    return payload.label + '；拨盘：' + formatDials(values) + advice;
+  }
+
+  async function postSelection(payload) {
+    const base = normalizePayload(payload);
+    const record = {
+      ...base,
+      dials: base.dials || readDials(),
+      adjustments: typeof base.adjustments === 'string' ? base.adjustments : '',
+      pageTitle: document.title,
+      at: new Date().toISOString()
+    };
+    try {
+      const res = await fetch('/api/select', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(record)
+      });
+      const data = await res.json();
+      window.dispatchEvent(new CustomEvent('qiaomu-design-selection-saved', {detail: data}));
+      showToast(data.ok ? '已选择 ' + record.label + '，已回传。' : '选择已触发，但回传状态异常。');
+      return data;
+    } catch (error) {
+      const text = selectionText(record);
+      if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
+      window.dispatchEvent(new CustomEvent('qiaomu-design-selection-failed', {detail: {error: String(error), record}}));
+      showToast('已选择 ' + record.label + '，但当前未能回传，已尝试复制选择文本。');
+      return {ok: false, error: String(error), record};
+    }
+  }
+
+  function closeConfirm() {
+    const confirm = document.querySelector('.qmdp-confirm');
+    if (confirm) { confirm.classList.remove('open'); confirm.setAttribute('aria-hidden', 'true'); } returnFocus?.focus({preventScroll:true});
+  }
+
+  function openConfirm(payload, el) {
+    ensureShell();
+    pendingElement = el; returnFocus = document.activeElement;
+    pendingSelection = normalizePayload({...payload, dials: readDials()});
+    const confirm = document.querySelector('.qmdp-confirm');
+    const meta = confirm?.querySelector('[data-qmdp-confirm-meta]');
+    const textarea = confirm?.querySelector('.qmdp-adjustments');
+    if (!confirm || !meta || !textarea) return;
+    meta.textContent = pendingSelection.label + ' · ' + formatDials(pendingSelection.dials);
+    textarea.value = pendingSelection.adjustments || '';
+    confirm.classList.add('open'); confirm.removeAttribute('aria-hidden');
+    requestAnimationFrame(() => textarea.focus({preventScroll: true}));
+  }
+
+  async function confirmPending() {
+    if (!pendingSelection) return;
+    const textarea = document.querySelector('.qmdp-adjustments');
+    const payload = {
+      ...pendingSelection,
+      dials: readDials(),
+      adjustments: textarea ? textarea.value.trim() : ''
+    };
+    closeConfirm();
+    showToast('正在回传 ' + payload.label + '...');
+    const result = await postSelection(payload); if (result.ok && pendingElement) markSelected(pendingElement);
+  }
+
+  function openConfirmFromPayload(payload) {
+    const normalized = normalizePayload(payload || {});
+    const cards = Array.from(document.querySelectorAll(optionSelector));
+    const el = cards.find(item => {
+      const data = optionPayload(item, 'external', cards.indexOf(item));
+      return (normalized.id && data.id === normalized.id) || (normalized.name && data.name === normalized.name);
+    });
+    openConfirm(normalized, el);
+    return {ok: false, pending: true};
+  }
+
+  window.qiaomuDesignSelect = openConfirmFromPayload;
+  window.addEventListener('qiaomu-design-select', event => openConfirmFromPayload(event.detail || {}));
+
+  function optionPayload(el, source, fallbackIndex = -1) {
+    const fallbackId = fallbackIndex >= 0 ? 'ABCD'[fallbackIndex] : '';
+    const id = el.dataset.designOption || el.dataset.option || el.dataset.choice || el.dataset.direction || el.dataset.id || el.dataset.key || fallbackId || '';
+    const name = el.dataset.name || el.querySelector('[data-direction-name]')?.textContent?.trim() || el.querySelector('h2,h3,strong')?.textContent?.trim() || '';
+    return {id, name, label: id && name ? id + ': ' + name : id || name, source};
+  }
+
+  function ensureOptionButtons() {
+    ensureShell();
+    const cards = Array.from(document.querySelectorAll(optionSelector)).filter(el => !el.closest('.qmdp-frame'));
+    cards.slice(0, 8).forEach((el, index) => {
+      if (el.querySelector('.qmdp-pick-button')) return;
+      const payload = optionPayload(el, 'button', index);
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'qmdp-pick-button';
+      button.dataset.qmdpInjected = 'true';
+      button.textContent = '选择 ' + (payload.id || optionLetters[index] || '') + (payload.name ? ' · ' + payload.name.replace(/^\d+\.\s*/, '') : '');
+      button.setAttribute('aria-label', button.textContent);
+      el.appendChild(button);
+    });
+  }
+
+  function markSelected(el) {
+    document.querySelectorAll('.qmdp-selected').forEach(item => item.classList.remove('qmdp-selected'));
+    if (el) el.classList.add('qmdp-selected');
+  }
+
+  document.addEventListener('click', event => {
+    if (event.target.closest('.qmdp-confirm')) return;
+    const pickButton = event.target.closest('.qmdp-pick-button');
+    if (
+      pickButton
+      && !pickButton.dataset.qmdpInjected
+      && (pickButton.dataset.qmdpNativeHandler === 'true' || pickButton.dataset.qmdpManaged === 'page')
+    ) return;
+    const interactive = event.target.closest('a,input,select,textarea,button,[contenteditable="true"]');
+    if (interactive && !pickButton) return;
+    const el = event.target.closest(optionSelector);
+    if (!el) return;
+    if (pickButton) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    const cards = Array.from(document.querySelectorAll(optionSelector));
+    openConfirm(optionPayload(el, 'click', cards.indexOf(el)), el);
+  }, true);
+
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && document.querySelector('.qmdp-confirm.open')) {
+      closeConfirm();
+      return;
+    }
+    if (event.target.closest('input,textarea,select,[contenteditable="true"]')) return;
+    if (document.querySelector('.qmdp-confirm.open')) return;
+    const index = ['1', '2', '3', '4'].indexOf(event.key);
+    if (index < 0) return;
+    const cards = document.querySelectorAll(optionSelector);
+    const el = cards[index];
+    if (!el) return;
+    event.preventDefault();
+    openConfirm(optionPayload(el, 'keyboard', index), el);
+  }, true);
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', ensureOptionButtons, {once: true});
+  } else {
+    ensureOptionButtons();
+  }
+})();
+</script>
+</body></html>

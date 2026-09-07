@@ -1,0 +1,9 @@
+node_modules/
+dist/
+target/
+work/
+.DS_Store
+.codegraph/
+*.log
+.env.local
+src-tauri/gen/schemas/

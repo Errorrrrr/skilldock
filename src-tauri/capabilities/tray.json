@@ -1,0 +1,1 @@
+{"identifier":"tray","description":"状态栏浮层只监听应用状态事件","windows":["tray"],"permissions":["core:event:allow-listen","core:event:allow-unlisten"]}
