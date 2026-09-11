@@ -21,42 +21,49 @@ impl Lifecycle {
         self.requested = false;
     }
     fn should_blur(&self, revision: u64, focused: bool) -> bool {
-        self.requested && self.revision == revision && !focused
+        self.should_close(revision) && !focused
+    }
+    fn should_close(&self, revision: u64) -> bool {
+        self.requested && self.revision == revision
     }
 }
 
-pub const ANIMATION_DURATION_MS: u64 = 140;
-
-// All native visibility changes are serialized on the event-loop thread.
+// Native visibility owns closing. There is no frontend exit animation to wait for.
 pub fn hide(app: &tauri::AppHandle) {
     app.state::<Popup>().0.lock().unwrap().close();
     if let Some(window) = app.get_webview_window("tray") {
         let _ = window.hide();
     }
 }
-
 pub fn dismiss(app: &tauri::AppHandle) {
+    hide(app);
+}
+
+#[cfg(target_os = "macos")]
+pub fn outside_click(app: &tauri::AppHandle) {
     let revision = {
         let state = app.state::<Popup>();
-        let mut state = state.0.lock().unwrap();
-        state.close();
+        let state = state.0.lock().unwrap();
+        if !state.requested {
+            return;
+        }
         state.revision
     };
-    if let Some(window) = app.get_webview_window("tray") {
-        let _ = window.emit("skilldock:tray-close", ());
-    }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(ANIMATION_DURATION_MS)).await;
+        // The local event monitor precedes the status-item handler. Allow that
+        // handler to toggle/invalidate this click before deciding to dismiss.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || {
-            let state = handle.state::<Popup>();
-            let state = state.0.lock().unwrap();
-            if !state.requested
-                && state.revision == revision
-                && let Some(window) = handle.get_webview_window("tray")
-            {
-                let _ = window.hide();
+            let close = handle
+                .state::<Popup>()
+                .0
+                .lock()
+                .unwrap()
+                .should_close(revision);
+            if close {
+                hide(&handle);
             }
         });
     });
@@ -142,6 +149,25 @@ mod tests {
     use super::*;
     fn click(state: &mut Lifecycle) {
         state.toggle();
+    }
+    #[test]
+    fn outside_click_does_not_require_a_focus_transition() {
+        let mut state = Lifecycle::default();
+        state.toggle();
+        assert!(!state.should_blur(state.revision, true));
+        assert!(state.should_close(state.revision));
+        state.close();
+        assert!(!state.should_close(state.revision));
+    }
+    #[test]
+    fn outside_click_queued_before_status_toggle_cannot_close_new_popup() {
+        let mut state = Lifecycle::default();
+        state.toggle();
+        let old = state.revision;
+        state.toggle();
+        state.toggle();
+        assert!(!state.should_close(old));
+        assert!(state.should_close(state.revision));
     }
     #[test]
     fn rapid_clicks_preserve_toggle_intent() {

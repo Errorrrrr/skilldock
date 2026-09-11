@@ -1,8 +1,16 @@
 <script setup lang="ts">
+import SkillDirectoryActions from '@/components/SkillDirectoryActions.vue'
 import AppSelect from '@/components/ui/AppSelect.vue'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { createColumnHelper, FlexRender, getCoreRowModel, useVueTable } from '@tanstack/vue-table'
+import {
+  createColumnHelper,
+  FlexRender,
+  getCoreRowModel,
+  getPaginationRowModel,
+  useVueTable,
+  type PaginationState,
+} from '@tanstack/vue-table'
 import {
   Search,
   Plus,
@@ -10,11 +18,16 @@ import {
   FolderInput,
   Globe2,
   Link2,
+  Unlink,
+  Check,
+  LockKeyhole,
   Trash2,
   Layers3,
   RefreshCcw,
   MoreHorizontal,
   SlidersHorizontal,
+  LayoutGrid,
+  List,
 } from 'lucide-vue-next'
 import Button from '@/components/ui/Button.vue'
 import Badge from '@/components/ui/Badge.vue'
@@ -23,15 +36,33 @@ import AppDialog from '@/components/ui/AppDialog.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import DirectoryField from '@/components/DirectoryField.vue'
 import SkillDetailSheet from '@/components/SkillDetailSheet.vue'
+import AppPagination from '@/components/ui/AppPagination.vue'
 import DistributionDialog from '@/components/DistributionDialog.vue'
 import { useAppStore } from '@/stores/app'
 import { api } from '@/services/api'
 import type { Skill } from '@/services/types'
+import { sourceUpdateState } from '@/services/sourceUpdates'
+import { librarySkills, type LibrarySkill } from '@/services/librarySkills'
+import { useLibraryDistribution } from '@/composables/useLibraryDistribution'
 
 const app = useAppStore()
 const router = useRouter()
 const route = useRoute()
 const query = ref(String(route.query.q || ''))
+const VIEW_MODE_KEY = 'skilldock_library_view_mode'
+const getStoredViewMode = (): 'grid' | 'table' => {
+  try {
+    const saved = localStorage.getItem(VIEW_MODE_KEY)
+    if (saved === 'grid' || saved === 'table') return saved
+  } catch {}
+  return 'grid'
+}
+const viewMode = ref<'grid' | 'table'>(getStoredViewMode())
+watch(viewMode, (mode) => {
+  try {
+    localStorage.setItem(VIEW_MODE_KEY, mode)
+  } catch {}
+})
 const scope = ref('all')
 const filtersOpen = ref(false)
 const sourceFilter = ref('')
@@ -67,38 +98,50 @@ const updateSkillIds = computed(
     ),
 )
 const sourceName = (id: string) =>
-  app.snapshot?.sources.find((item) => item.id === id)?.name || '独立来源'
-const bindingSummary = (skillId: string) => {
-  const rows = app.snapshot?.bindings.filter((item) => item.skillId === skillId) ?? []
-  const names = rows.map(
-    (item) =>
-      app.snapshot?.targets.find((target) => target.id === item.targetId)?.name || '未知目标',
-  )
-  return names.length > 1 ? `${names[0]} +${names.length - 1}` : names[0] || '未分发'
-}
+  app.sourceName(app.snapshot?.sources.find((item) => item.id === id)) || '独立来源'
+const rows = computed(() => librarySkills(app.snapshot))
+const distribution = useLibraryDistribution(rows)
+const {
+  operationError,
+  repairSkillId,
+  repairOpen,
+  repairPreview,
+  distributionBusy,
+  batchOpen,
+  batchMode,
+  batchTargetIds,
+  batchError,
+  batchSummary,
+} = distribution
+const selectedRows = computed(() => rows.value.filter((row) => selected.value.includes(row.id)))
+const selectedMemberIds = computed(() => selectedRows.value.flatMap((row) => row.memberIds))
 const filteredSkills = computed(() =>
-  (app.snapshot?.skills ?? []).filter((skill) => {
-    const text = `${skill.name} ${skill.description} ${sourceName(skill.sourceId)}`.toLowerCase()
+  rows.value.filter((skill) => {
+    const text = skill.members
+      .map((member) => `${member.name} ${member.description} ${sourceName(member.sourceId)}`)
+      .join(' ')
+      .toLowerCase()
     return (
-      (scope.value === 'all' ||
-        app.snapshot?.bindings.some((binding) => binding.skillId === skill.id)) &&
+      (scope.value === 'all' || skill.tools.some((tool) => tool.active)) &&
       (!query.value || text.includes(query.value.toLowerCase())) &&
-      (!sourceFilter.value || skill.sourceId === sourceFilter.value) &&
+      (!sourceFilter.value ||
+        skill.members.some((member) => member.sourceId === sourceFilter.value)) &&
       (!targetFilter.value ||
-        app.snapshot?.bindings.some(
-          (binding) => binding.skillId === skill.id && binding.targetId === targetFilter.value,
-        )) &&
+        skill.tools.some((tool) => tool.id === targetFilter.value && tool.active)) &&
       (!presetFilter.value ||
         app.snapshot?.presets
           .find((preset) => preset.id === presetFilter.value)
-          ?.skillIds.includes(skill.id)) &&
+          ?.skillIds.some((id) => skill.memberIds.includes(id))) &&
       (!updateFilter.value ||
         (updateFilter.value === 'available'
-          ? updateSkillIds.value.has(skill.id)
-          : !updateSkillIds.value.has(skill.id)))
+          ? skill.memberIds.some((id) => updateSkillIds.value.has(id))
+          : !skill.memberIds.some((id) => updateSkillIds.value.has(id))))
     )
   }),
 )
+function openBatch(mode: 'distribute' | 'revoke') {
+  distribution.openBatch(selected.value, mode)
+}
 const filterCount = computed(
   () =>
     [sourceFilter.value, targetFilter.value, presetFilter.value, updateFilter.value].filter(Boolean)
@@ -135,15 +178,14 @@ function toggleAll() {
     ? selected.value.filter((id) => !filteredSkills.value.some((skill) => skill.id === id))
     : [...new Set([...selected.value, ...filteredSkills.value.map((skill) => skill.id)])]
 }
-const column = createColumnHelper<Skill>()
+const column = createColumnHelper<LibrarySkill>()
 const columns = [
   column.display({ id: 'select', header: () => '', cell: () => '' }),
   column.accessor('name', { header: '名称', cell: (info) => info.getValue() }),
-  column.accessor('sourceId', { header: '来源', cell: (info) => sourceName(info.getValue()) }),
   column.display({
     id: 'bindings',
-    header: '分发至',
-    cell: (info) => bindingSummary(info.row.original.id),
+    header: '工具分发 · 点击切换',
+    cell: () => '',
   }),
   column.display({
     id: 'updates',
@@ -152,13 +194,50 @@ const columns = [
   }),
   column.display({ id: 'actions', header: '', cell: () => '' }),
 ]
-const table = useVueTable({
-  get data() {
-    return filteredSkills.value
-  },
-  columns,
-  getCoreRowModel: getCoreRowModel(),
+const pagination = ref<PaginationState>({
+  pageIndex: 0,
+  pageSize: 20,
 })
+const table = useVueTable({
+  data: filteredSkills,
+  columns,
+  state: {
+    get pagination() {
+      return pagination.value
+    },
+  },
+  onPaginationChange: (updater) => {
+    const next = typeof updater === 'function' ? updater(pagination.value) : updater
+    pagination.value = {
+      pageIndex: Math.max(0, next.pageIndex),
+      pageSize: Math.max(1, Math.floor(next.pageSize || 20)),
+    }
+  },
+  getCoreRowModel: getCoreRowModel(),
+  getPaginationRowModel: getPaginationRowModel(),
+  autoResetPageIndex: false,
+})
+watch([query, scope, sourceFilter, targetFilter, presetFilter, updateFilter], () => {
+  pagination.value = { ...pagination.value, pageIndex: 0 }
+})
+watch(
+  () => filteredSkills.value.length,
+  (total) => {
+    const lastPage = Math.max(0, Math.ceil(total / pagination.value.pageSize) - 1)
+    if (pagination.value.pageIndex > lastPage)
+      pagination.value = { ...pagination.value, pageIndex: lastPage }
+  },
+)
+function changePage(page: number) {
+  const lastPage = Math.max(
+    0,
+    Math.ceil(filteredSkills.value.length / pagination.value.pageSize) - 1,
+  )
+  pagination.value = { ...pagination.value, pageIndex: Math.min(lastPage, Math.max(0, page - 1)) }
+}
+function changePageSize(size: number) {
+  pagination.value = { pageIndex: 0, pageSize: Math.max(1, Math.floor(Number(size) || 20)) }
+}
 function openDetail(skill: Skill) {
   detail.value = skill
   detailOpen.value = true
@@ -196,7 +275,7 @@ async function importFolder() {
   }
 }
 async function removeSelected() {
-  const ids = [...selected.value]
+  const ids = [...selectedMemberIds.value]
   for (const id of ids) {
     const ok = await app.mutate(() => api.removeSkill(id), `已从库中卸载 ${ids.length} 个 Skill`)
     if (!ok) break
@@ -213,22 +292,78 @@ async function addToPreset() {
         id: preset.id,
         name: preset.name,
         description: preset.description,
-        skillIds: [...new Set([...preset.skillIds, ...selected.value])],
+        skillIds: [
+          ...new Set([
+            ...preset.skillIds,
+            ...selectedRows.value
+              .filter((row) => !row.memberIds.some((id) => preset.skillIds.includes(id)))
+              .map((row) => row.id),
+          ]),
+        ],
       }),
     `已加入预设「${preset.name}」`,
   )
   if (ok) addPresetOpen.value = false
 }
+const rowUpdateSources = computed(() =>
+  Object.fromEntries(
+    rows.value.map((row) => {
+      const sources = (app.snapshot?.sources ?? []).filter((source) =>
+        row.members.some((member) => member.sourceId === source.id),
+      )
+      return [
+        row.id,
+        {
+          pendingId: sources.find((source) => sourceUpdateState(source).needsSetup)?.id,
+          localOnly:
+            sources.length > 0 &&
+            sources.every((source) => sourceUpdateState(source).localReference),
+        },
+      ]
+    }),
+  ),
+)
+const selectedSources = computed(() =>
+  (app.snapshot?.sources ?? []).filter((source) =>
+    selectedRows.value.some((row) => row.members.some((member) => member.sourceId === source.id)),
+  ),
+)
+const selectedCheckable = computed(() =>
+  selectedSources.value.filter((source) => sourceUpdateState(source).canCheck),
+)
+const selectedPending = computed(() =>
+  selectedSources.value.filter((source) => sourceUpdateState(source).needsSetup),
+)
+const checkingUpdates = ref(false)
+const updateActionLabel = computed(() =>
+  checkingUpdates.value
+    ? '检查中…'
+    : selectedCheckable.value.length
+      ? '检查更新'
+      : selectedPending.value.length
+        ? '配置更新来源'
+        : '跟随本地内容',
+)
+function configureUpdateSource(sourceId?: string) {
+  router.push({ path: '/updates', query: { tab: 'sources', sourceId } })
+}
 async function checkUpdates() {
-  const sourceIds = [
-    ...new Set(
-      (app.snapshot?.skills.filter((item) => selected.value.includes(item.id)) ?? []).map(
-        (item) => item.sourceId,
-      ),
-    ),
-  ]
-  for (const sourceId of sourceIds)
-    await app.mutate(() => api.checkSource(sourceId, false), '已完成所选 Skill 的来源检查')
+  if (checkingUpdates.value || app.loading) return
+  if (!selectedCheckable.value.length) {
+    if (selectedPending.value.length) configureUpdateSource(selectedPending.value[0]!.id)
+    return
+  }
+  checkingUpdates.value = true
+  const skipped = selectedSources.value.length - selectedCheckable.value.length
+  const failures: string[] = []
+  let completed = 0
+  for (const source of [...selectedCheckable.value]) {
+    if (await app.mutate(() => api.checkSource(source.id, false), '来源检查完成')) completed++
+    else failures.push(`${app.sourceName(source)}：${app.error}`)
+  }
+  checkingUpdates.value = false
+  app.notice = `已检查 ${completed} 个来源${skipped ? `，跳过 ${skipped} 个未配置或无需检查的来源` : ''}`
+  if (failures.length) app.error = failures.join('；')
 }
 function openAdd() {
   addOpen.value = true
@@ -241,11 +376,11 @@ function openCatalog() {
 
 const sourceFilterOptions = computed(() => [
   { value: '', label: '全部来源' },
-  ...(app.snapshot?.sources ?? []).map((item) => ({ value: item.id, label: item.name })),
+  ...(app.snapshot?.sources ?? []).map((item) => ({ value: item.id, label: app.sourceName(item) })),
 ])
 const targetFilterOptions = computed(() => [
   { value: '', label: '全部目标' },
-  ...(app.snapshot?.targets ?? []).map((item) => ({ value: item.id, label: item.name })),
+  ...(app.snapshot?.targets ?? []).map((item) => ({ value: item.id, label: app.targetName(item) })),
 ])
 const presetFilterOptions = computed(() => [
   { value: '', label: '全部预设' },
@@ -270,14 +405,41 @@ const presetIdOptions = computed(() => [
     <header class="page-heading">
       <div>
         <h1 class="page-title">
-          Skill 库<span class="title-count">{{ app.snapshot?.skills.length || 0 }}</span>
+          Skill 库<span class="title-count">{{ rows.length }}</span>
         </h1>
-        <p class="page-subtitle">集中保管，按需分发。</p>
+        <p class="page-subtitle">一个 Skill 一行，点击工具即可分发或取消。</p>
       </div>
       <div class="actions">
         <Button variant="primary" @click="openAdd"><Plus />添加 Skill</Button>
       </div>
     </header>
+    <div v-if="operationError" class="callout warning" role="alert" style="margin-bottom: 16px">
+      <p>{{ operationError }}</p>
+      <Button
+        v-if="repairSkillId"
+        size="sm"
+        :disabled="distributionBusy"
+        @click="distribution.previewRepair"
+        >重新收录当前内容</Button
+      >
+    </div>
+    <AppDialog
+      v-model:open="repairOpen"
+      title="重新收录当前内容"
+      :description="`此来源包包含 ${repairPreview?.skillCount || 0} 个 Skill，将以统一库当前文件生成新快照。`"
+    >
+      <p>
+        现有链接、预设锁定版本和旧快照保留。完成后可再次分发；Skill
+        文件的实际修改也会作为新版本收录。
+      </p>
+      <p v-if="operationError" class="field-error">{{ operationError }}</p>
+      <template #footer>
+        <Button :disabled="distributionBusy" @click="repairOpen = false">取消</Button>
+        <Button variant="primary" :disabled="distributionBusy" @click="distribution.repair"
+          >确认重新收录</Button
+        >
+      </template>
+    </AppDialog>
     <section class="panel library-panel">
       <div class="toolbar library-toolbar">
         <div class="search-field">
@@ -314,6 +476,28 @@ const presetIdOptions = computed(() => [
             filterCount
           }}</span></Button
         >
+        <div class="segmented library-view-mode" role="group" aria-label="视图模式">
+          <button
+            class="segment"
+            :class="{ active: viewMode === 'grid' }"
+            :aria-pressed="viewMode === 'grid'"
+            title="卡片视图"
+            aria-label="卡片视图"
+            @click="viewMode = 'grid'"
+          >
+            <LayoutGrid style="width: 14px; height: 14px" />
+          </button>
+          <button
+            class="segment"
+            :class="{ active: viewMode === 'table' }"
+            :aria-pressed="viewMode === 'table'"
+            title="列表视图"
+            aria-label="列表视图"
+            @click="viewMode = 'table'"
+          >
+            <List style="width: 14px; height: 14px" />
+          </button>
+        </div>
       </div>
       <div v-if="filtersOpen" id="library-filters" class="library-filters">
         <label class="field"
@@ -348,6 +532,137 @@ const presetIdOptions = computed(() => [
           ><FolderInput />归集已有 Skill</Button
         >
       </EmptyState>
+
+      <!-- 卡片网格视图 -->
+      <div v-else-if="viewMode === 'grid'" class="library-cards-container">
+        <div class="library-grid-header">
+          <label class="library-select-all">
+            <input
+              class="checkbox"
+              type="checkbox"
+              :checked="allChecked"
+              aria-label="全选当前结果"
+              @change="toggleAll"
+            />
+            <span>全选当前结果 ({{ filteredSkills.length }})</span>
+          </label>
+          <span v-if="selected.length" class="library-selected-count">
+            已选 {{ selected.length }} 项
+          </span>
+        </div>
+
+        <div class="library-grid">
+          <article
+            v-for="row in table.getRowModel().rows"
+            :key="row.id"
+            class="library-card"
+            :class="{ 'card-selected': selected.includes(row.original.id) }"
+            @click="openDetail(row.original)"
+          >
+            <header class="library-card-header" @click.stop>
+              <div class="library-card-title-group">
+                <input
+                  v-model="selected"
+                  class="checkbox"
+                  type="checkbox"
+                  :value="row.original.id"
+                  :aria-label="`选择 ${row.original.name}`"
+                />
+                <h3 class="library-card-name">
+                  <button class="item-name-button" @click.stop="openDetail(row.original)">
+                    {{ row.original.name }}
+                  </button>
+                </h3>
+              </div>
+              <div class="library-card-actions">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  title="查看详情"
+                  aria-label="查看详情"
+                  @click.stop="openDetail(row.original)"
+                >
+                  <MoreHorizontal />
+                </Button>
+              </div>
+            </header>
+
+            <div class="library-card-badges">
+              <Badge v-if="row.original.externalPath" tone="blue">本地引用 · 跟随内容</Badge>
+              <span
+                v-if="row.original.members.length > 1"
+                class="library-copy-note"
+                :title="row.original.memberSummary"
+              >
+                已汇总 {{ row.original.members.length }} 份来源
+              </span>
+            </div>
+
+            <p class="library-card-desc" :title="row.original.description">
+              {{ row.original.description || '暂无描述' }}
+            </p>
+
+            <div class="library-card-dir" @click.stop>
+              <SkillDirectoryActions :skill="row.original" :members="row.original.members" />
+            </div>
+
+            <footer class="library-card-footer" @click.stop>
+              <div class="library-card-tools-section">
+                <span class="library-card-section-label">分发目标：</span>
+                <div v-if="row.original.tools.length" class="library-tools">
+                  <button
+                    v-for="tool in row.original.tools"
+                    :key="tool.id"
+                    class="tool-toggle"
+                    :class="{ active: tool.active, protected: tool.protected }"
+                    :aria-pressed="tool.active"
+                    :aria-label="`${row.original.name} · ${tool.name} · ${tool.actionLabel}`"
+                    :title="tool.hint"
+                    :disabled="distributionBusy || app.loading || tool.protected"
+                    @click.stop="distribution.toggle(row.original.id, tool.id)"
+                  >
+                    <LockKeyhole v-if="tool.protected" />
+                    <Check v-else-if="tool.active" />
+                    <Plus v-else />
+                    <span>{{ tool.name }}</span>
+                    <span v-if="tool.external" class="tool-note">外部</span>
+                    <span v-else-if="tool.protected" class="tool-note">预设</span>
+                  </button>
+                </div>
+                <Button v-else size="sm" variant="ghost" @click="router.push('/targets')">
+                  配置工具
+                </Button>
+              </div>
+
+              <div class="library-card-update-status">
+                <Button
+                  v-if="rowUpdateSources[row.original.id]?.pendingId"
+                  size="sm"
+                  variant="ghost"
+                  @click="configureUpdateSource(rowUpdateSources[row.original.id]?.pendingId)"
+                >
+                  配置更新来源
+                </Button>
+                <span
+                  v-else-if="rowUpdateSources[row.original.id]?.localOnly"
+                  class="subtle"
+                  style="font-size: 11px"
+                >
+                  跟随本地内容
+                </span>
+                <Badge
+                  v-else-if="row.original.memberIds.some((id) => updateSkillIds.has(id))"
+                  tone="amber"
+                >
+                  待更新
+                </Badge>
+              </div>
+            </footer>
+          </article>
+        </div>
+      </div>
+
+      <!-- 表格列表视图 -->
       <div v-else class="table-wrap">
         <table class="data-table library-table">
           <thead>
@@ -359,11 +674,11 @@ const presetIdOptions = computed(() => [
                   header.id === 'select'
                     ? 'width:42px'
                     : header.id === 'name'
-                      ? 'width:36%'
+                      ? 'width:38%'
                       : header.id === 'actions'
                         ? 'width:40px'
                         : header.id === 'updates'
-                          ? 'width:90px'
+                          ? 'width:150px'
                           : ''
                 "
               >
@@ -408,16 +723,58 @@ const presetIdOptions = computed(() => [
                         {{ row.original.name }}
                       </button>
                     </div>
+                    <Badge v-if="row.original.externalPath" tone="blue">本地引用 · 跟随内容</Badge>
                     <div class="item-desc">{{ row.original.description }}</div>
+                    <SkillDirectoryActions :skill="row.original" :members="row.original.members" />
+                    <span
+                      v-if="row.original.members.length > 1"
+                      class="library-copy-note"
+                      :title="row.original.memberSummary"
+                      >已汇总 {{ row.original.members.length }} 份来源记录</span
+                    >
                   </div>
                 </div>
               </td>
-              <td>
-                <span class="source-name">{{ sourceName(row.original.sourceId) }}</span>
+              <td class="library-tools-cell" @click.stop>
+                <div v-if="row.original.tools.length" class="library-tools">
+                  <button
+                    v-for="tool in row.original.tools"
+                    :key="tool.id"
+                    class="tool-toggle"
+                    :class="{ active: tool.active, protected: tool.protected }"
+                    :aria-pressed="tool.active"
+                    :aria-label="`${row.original.name} · ${tool.name} · ${tool.actionLabel}`"
+                    :title="tool.hint"
+                    :disabled="distributionBusy || app.loading || tool.protected"
+                    @click="distribution.toggle(row.original.id, tool.id)"
+                  >
+                    <LockKeyhole v-if="tool.protected" />
+                    <Check v-else-if="tool.active" />
+                    <Plus v-else />
+                    <span>{{ tool.name }}</span>
+                    <span v-if="tool.external" class="tool-note">外部安装</span
+                    ><span v-else-if="tool.protected" class="tool-note">预设</span>
+                  </button>
+                </div>
+                <Button v-else size="sm" variant="ghost" @click="router.push('/targets')"
+                  >配置工具</Button
+                >
               </td>
-              <td class="binding-name">{{ bindingSummary(row.original.id) }}</td>
-              <td>
-                <Badge v-if="updateSkillIds.has(row.original.id)" tone="amber">待更新</Badge
+              <td @click.stop>
+                <Button
+                  v-if="rowUpdateSources[row.original.id]?.pendingId"
+                  size="sm"
+                  variant="ghost"
+                  @click="configureUpdateSource(rowUpdateSources[row.original.id]?.pendingId)"
+                  >配置更新来源</Button
+                >
+                <span v-else-if="rowUpdateSources[row.original.id]?.localOnly" class="subtle"
+                  >跟随本地内容</span
+                >
+                <Badge
+                  v-else-if="row.original.memberIds.some((id) => updateSkillIds.has(id))"
+                  tone="amber"
+                  >待更新</Badge
                 ><span v-else class="update-empty" aria-label="无待处理更新">—</span>
               </td>
               <td @click.stop>
@@ -434,21 +791,82 @@ const presetIdOptions = computed(() => [
           </tbody>
         </table>
       </div>
-      <div v-if="filteredSkills.length" class="library-footer">
-        <span>{{ filteredSkills.length }} 个 Skill</span
-        ><RouterLink to="/targets" class="link-button">管理分发目标</RouterLink>
-      </div>
+      <AppPagination
+        v-if="filteredSkills.length"
+        :page="pagination.pageIndex + 1"
+        :page-size="pagination.pageSize"
+        :total="filteredSkills.length"
+        :page-size-options="[10, 20, 50, 100]"
+        @update:page="changePage"
+        @update:page-size="changePageSize"
+      />
     </section>
     <div v-if="selected.length" class="bulk-bar library-bulk">
       <strong>已选 {{ selected.length }} 项</strong
-      ><Button size="sm" variant="primary" @click="openDistribute(selected)"><Link2 />分发</Button
+      ><Button
+        size="sm"
+        variant="primary"
+        @click="openBatch('distribute')"
+        :disabled="distributionBusy || app.loading"
+        ><Link2 />批量分发</Button
+      ><Button size="sm" @click="openBatch('revoke')" :disabled="distributionBusy || app.loading"
+        ><Unlink />批量取消</Button
       ><Button size="sm" @click="addPresetOpen = true"><Layers3 />加入预设</Button
-      ><Button size="sm" @click="checkUpdates"><RefreshCcw />检查更新</Button
+      ><Button
+        size="sm"
+        :disabled="
+          checkingUpdates || app.loading || (!selectedCheckable.length && !selectedPending.length)
+        "
+        @click="checkUpdates"
+        ><RefreshCcw />{{ updateActionLabel }}</Button
+      ><Button
+        v-if="selectedCheckable.length && selectedPending.length"
+        size="sm"
+        @click="configureUpdateSource(selectedPending[0]?.id)"
+        >配置更新来源（{{ selectedPending.length }}）</Button
       ><Button size="sm" variant="danger" @click="removeOpen = true"><Trash2 />从库中卸载</Button
       ><span class="bulk-spacer" /><button class="link-button" @click="selected = []">
         取消选择
       </button>
     </div>
+    <AppDialog
+      :open="batchOpen"
+      :title="batchMode === 'distribute' ? '批量分发' : '批量取消分发'"
+      :description="batchSummary"
+      @update:open="distribution.closeBatch($event)"
+    >
+      <div class="choice-list">
+        <label v-for="target in app.snapshot?.targets" :key="target.id" class="choice">
+          <input
+            v-model="batchTargetIds"
+            type="checkbox"
+            class="checkbox"
+            :value="target.id"
+            :disabled="distributionBusy"
+          />
+          <div class="choice-main">
+            <div class="choice-title">{{ app.targetName(target) }}</div>
+            <div class="choice-meta mono">{{ target.path }}</div>
+          </div>
+        </label>
+      </div>
+      <p v-if="!app.snapshot?.targets.length" class="subtle">
+        尚未配置工具，请先到工具目录添加目标。
+      </p>
+      <p v-if="batchError" class="field-error" role="alert">{{ batchError }}</p>
+      <template #footer>
+        <Button :disabled="distributionBusy" @click="distribution.closeBatch(false)">取消</Button>
+        <Button
+          variant="primary"
+          :disabled="distributionBusy || !batchTargetIds.length"
+          @click="distribution.submitBatch"
+        >
+          {{
+            distributionBusy ? '处理中…' : batchMode === 'distribute' ? '确认分发' : '确认取消分发'
+          }}
+        </Button>
+      </template>
+    </AppDialog>
     <SkillDetailSheet
       v-model:open="detailOpen"
       :skill="detail"
@@ -542,3 +960,189 @@ const presetIdOptions = computed(() => [
     />
   </div>
 </template>
+
+<style scoped>
+.library-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.library-tools-cell {
+  white-space: normal;
+}
+.tool-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.tool-toggle svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+.tool-toggle.active {
+  background: var(--blue-soft);
+  color: var(--blue);
+  border-color: var(--blue);
+}
+.tool-toggle:hover:not(:disabled) {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+.tool-toggle:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+.tool-toggle:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.tool-note,
+.library-copy-note {
+  font-size: 11px;
+  color: var(--muted);
+}
+.library-copy-note {
+  display: block;
+  margin-top: 4px;
+}
+
+/* 视图切换器 */
+.library-view-mode {
+  flex-shrink: 0;
+}
+
+/* 卡片网格布局 */
+.library-cards-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.library-grid-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.library-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.library-selected-count {
+  font-size: 12px;
+  color: var(--blue);
+  font-weight: 500;
+}
+.library-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+.library-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgb(25 45 80 / 3%);
+  transition:
+    border-color 0.2s var(--ease-out),
+    box-shadow 0.2s var(--ease-out),
+    transform 0.2s var(--ease-out);
+  cursor: pointer;
+}
+.library-card:hover {
+  border-color: var(--control-line);
+  box-shadow: 0 4px 16px rgb(25 45 80 / 6%);
+  transform: translateY(-1px);
+}
+.library-card.card-selected {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+  box-shadow: 0 2px 8px rgb(36 99 212 / 12%);
+}
+.library-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.library-card-title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+.library-card-name {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.library-card-actions {
+  flex-shrink: 0;
+}
+.library-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.library-card-desc {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 0 0 10px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 38px;
+}
+.library-card-dir {
+  margin-bottom: 12px;
+}
+.library-card-footer {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.library-card-tools-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.library-card-section-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+.library-card-update-status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 24px;
+}
+</style>

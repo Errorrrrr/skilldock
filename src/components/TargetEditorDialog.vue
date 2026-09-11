@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { defaultAgentProfiles } from '@/services/agentProfiles'
 import AppSelect from '@/components/ui/AppSelect.vue'
 import { computed, ref, watch } from 'vue'
 import { useField, useForm } from 'vee-validate'
@@ -32,52 +33,24 @@ const { value: scope } = useField<'user' | 'project'>('scope')
 const { value: path, errorMessage: pathError } = useField<string>('path')
 const busy = ref(false)
 const projectPath = ref('')
-// Codex uses its compatible user directory by product choice; shared skills are a separate target.
-const profiles = [
-  {
-    name: '通用 Agent Skills',
-    user: '~/.agents/skills',
-    project: '.agents/skills',
-    docs: 'https://agentskills.io',
+const profiles = computed(() => app.snapshot?.settings.agentProfiles || defaultAgentProfiles)
+const profile = computed(() => profiles.value.find((item) => item.name === tool.value))
+const pathChoice = ref('')
+const directoryOptions = computed(
+  () =>
+    (scope.value === 'user' ? profile.value?.userPaths : profile.value?.projectPaths)?.map(
+      (value) => ({ value, label: value }),
+    ) || [],
+)
+watch(
+  directoryOptions,
+  (options) => {
+    if (!options.some((option) => option.value === pathChoice.value)) {
+      pathChoice.value = options[0]?.value || ''
+    }
   },
-  {
-    name: 'Codex',
-    user: '~/.codex/skills',
-    project: '.agents/skills',
-    docs: 'https://developers.openai.com/codex/skills/',
-  },
-  {
-    name: 'Claude Code',
-    user: '~/.claude/skills',
-    project: '.claude/skills',
-    docs: 'https://code.claude.com/docs/en/skills',
-  },
-  {
-    name: 'Cursor',
-    user: '~/.cursor/skills',
-    project: '.cursor/skills',
-    docs: 'https://cursor.com/docs/skills',
-  },
-  {
-    name: 'OpenCode',
-    user: '~/.config/opencode/skills',
-    project: '.opencode/skills',
-    docs: 'https://opencode.ai/docs/skills/',
-  },
-  {
-    name: 'Gemini CLI',
-    user: '~/.gemini/skills',
-    project: '.gemini/skills',
-    docs: 'https://geminicli.com/docs/cli/skills/',
-  },
-  {
-    name: 'OpenClaw',
-    user: '~/.openclaw/skills',
-    project: 'skills',
-    docs: 'https://docs.openclaw.ai/tools/skills',
-  },
-]
-const profile = computed(() => profiles.find((item) => item.name === tool.value))
+  { immediate: true },
+)
 const defaultName = computed(() => {
   if (!profile.value) return ''
   const projectName = projectPath.value
@@ -89,11 +62,12 @@ const defaultName = computed(() => {
 })
 const defaultPath = computed(() => {
   if (!profile.value) return ''
-  if (scope.value === 'user') return profile.value.user
+  if (scope.value === 'user') return pathChoice.value
+  if (!pathChoice.value) return ''
   const base = projectPath.value.trim().replace(/[\\/]+$/, '')
   if (!base && projectPath.value.trim() !== '/') return ''
   const separator = base.includes('\\') ? '\\' : '/'
-  return `${base}${separator}${profile.value.project.replaceAll('/', separator)}`
+  return `${base}${separator}${pathChoice.value.replaceAll('/', separator)}`
 })
 const projectLabel = computed(() =>
   tool.value === 'OpenClaw' ? 'OpenClaw 工作空间目录' : '项目目录',
@@ -104,7 +78,7 @@ const directoryHint = computed(() => {
     return '.agents/skills 是共享目录，可被支持此约定的多个工具读取。'
   if (tool.value === 'Codex')
     return scope.value === 'user'
-      ? '默认使用 ~/.codex/skills；需要共享目录时，请选择「通用 Agent Skills」。'
+      ? '默认使用 ~/.codex/skills；可在「设置 → 工具目录」配置更多路径。'
       : 'Codex 项目级使用 .agents/skills，兼容工具也可能读取此目录。'
   if (tool.value === 'OpenClaw')
     return '使用自定义状态目录时请修改路径；项目级应选择 OpenClaw 配置中的工作空间。'
@@ -126,6 +100,8 @@ watch(
     if (!open) return
     projectPath.value = ''
     resetForm()
+    pathChoice.value = profiles.value.find((item) => item.name === 'Codex')?.userPaths[0] || ''
+    path.value = pathChoice.value
   },
 )
 const submit = handleSubmit(async (values) => {
@@ -144,10 +120,10 @@ const submit = handleSubmit(async (values) => {
   if (ok) emit('update:open', false)
 })
 
-const toolOptions = [
-  ...profiles.map((item) => ({ value: item.name, label: item.name })),
+const toolOptions = computed(() => [
+  ...profiles.value.map((item) => ({ value: item.name, label: item.name })),
   { value: '自定义', label: '自定义' },
-]
+])
 const scopeOptions = [
   { value: 'user', label: '用户级' },
   { value: 'project', label: '项目级' },
@@ -176,6 +152,13 @@ const scopeOptions = [
           :placeholder="`选择${projectLabel}，自动生成 Skill 目录`"
         />
       </div>
+      <label v-if="directoryOptions.length" class="field" style="grid-column: 1/-1"
+        ><span class="field-label">已配置的 Skill 路径</span
+        ><AppSelect
+          v-model="pathChoice"
+          :options="directoryOptions"
+          aria-label="已配置的 Skill 路径"
+      /></label>
       <label class="field" style="grid-column: 1/-1">
         <span class="field-label">目标名称</span>
         <input v-model="name" class="input" placeholder="例如：营销项目" />

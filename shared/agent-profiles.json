@@ -1,0 +1,106 @@
+[
+  {
+    "id": "agents",
+    "name": "通用 Agent Skills",
+    "userPaths": [
+      "~/.agents/skills"
+    ],
+    "projectPaths": [
+      ".agents/skills"
+    ]
+  },
+  {
+    "id": "codex",
+    "name": "Codex",
+    "userPaths": [
+      "~/.codex/skills"
+    ],
+    "projectPaths": [
+      ".agents/skills"
+    ]
+  },
+  {
+    "id": "claude",
+    "name": "Claude Code",
+    "userPaths": [
+      "~/.claude/skills"
+    ],
+    "projectPaths": [
+      ".claude/skills"
+    ]
+  },
+  {
+    "id": "cursor",
+    "name": "Cursor",
+    "userPaths": [
+      "~/.cursor/skills"
+    ],
+    "projectPaths": [
+      ".cursor/skills"
+    ]
+  },
+  {
+    "id": "opencode",
+    "name": "OpenCode",
+    "userPaths": [
+      "~/.config/opencode/skills"
+    ],
+    "projectPaths": [
+      ".opencode/skills"
+    ]
+  },
+  {
+    "id": "gemini",
+    "name": "Gemini CLI",
+    "userPaths": [
+      "~/.gemini/skills"
+    ],
+    "projectPaths": [
+      ".gemini/skills"
+    ]
+  },
+  {
+    "id": "openclaw",
+    "name": "OpenClaw",
+    "userPaths": [
+      "~/.openclaw/skills"
+    ],
+    "projectPaths": [
+      "skills"
+    ]
+  },
+  {
+    "id": "workbuddy",
+    "name": "WorkBuddy",
+    "userPaths": [
+      "~/.workbuddy/skills",
+      "~/.codebuddy/skills"
+    ],
+    "projectPaths": [
+      ".workbuddy/skills",
+      ".codebuddy/skills"
+    ]
+  },
+  {
+    "id": "trae",
+    "name": "Trae",
+    "userPaths": [
+      "~/.trae/skills"
+    ],
+    "projectPaths": [
+      ".trae/skills"
+    ]
+  },
+  {
+    "id": "antigravity",
+    "name": "Antigravity",
+    "userPaths": [
+      "~/.gemini/config/skills",
+      "~/.gemini/antigravity/skills"
+    ],
+    "projectPaths": [
+      ".agents/skills",
+      ".agent/skills"
+    ]
+  }
+]

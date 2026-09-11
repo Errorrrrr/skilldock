@@ -13,13 +13,13 @@ import {
   Settings,
   CheckCircle2,
   CircleAlert,
-  Search,
   X,
 } from 'lucide-vue-next'
 import { useAppStore } from '@/stores/app'
+import { librarySkillCount } from '@/services/librarySkills'
 const app = useAppStore()
 const router = useRouter()
-const shortcut = /Mac/i.test(navigator.platform) ? '⌘ K' : 'Ctrl K'
+const libraryCount = computed(() => librarySkillCount(app.snapshot))
 const updateCount = computed(
   () =>
     app.snapshot?.sources.filter((source) => ['available', 'attention'].includes(source.status))
@@ -29,7 +29,7 @@ const groups = computed(() => [
   {
     label: '资料库',
     items: [
-      { to: '/library', label: 'Skill 库', icon: Archive, count: app.snapshot?.skills.length },
+      { to: '/library', label: 'Skill 库', icon: Archive, count: libraryCount.value },
       { to: '/discover', label: '发现与安装', icon: Compass },
       { to: '/presets', label: '预设', icon: Layers3, count: app.snapshot?.presets.length },
     ],
@@ -102,12 +102,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       </nav>
     </aside>
     <main id="main-content" class="workspace" tabindex="-1">
-      <header class="topbar">
-        <span class="workspace-label">我的资料库</span
-        ><button class="global-search" aria-label="搜索 Skill" @click="focusSearch">
-          <Search aria-hidden="true" /><span>搜索 Skill</span><kbd>{{ shortcut }}</kbd>
-        </button>
-      </header>
       <div class="content">
         <div v-if="app.recoverableTasks.length" class="recovery-bar" role="status">
           <CircleAlert />有 {{ app.recoverableTasks.length }} 个任务需要恢复。<RouterLink

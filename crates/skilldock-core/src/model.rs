@@ -20,6 +20,9 @@ impl Default for Policy {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Skill {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub external_path: Option<String>,
     pub id: String,
     pub name: String,
     pub description: String,
@@ -59,6 +62,14 @@ pub struct Target {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Binding {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub original_link: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub external_path: Option<String>,
+    #[serde(default)]
+    pub borrowed: bool,
     pub id: String,
     pub skill_id: String,
     pub target_id: String,
@@ -92,22 +103,87 @@ pub struct Task {
 }
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+pub struct AgentProfile {
+    pub id: String,
+    pub name: String,
+    pub user_paths: Vec<String>,
+    pub project_paths: Vec<String>,
+}
+pub fn default_agent_profiles() -> Vec<AgentProfile> {
+    serde_json::from_str(include_str!("../../../shared/agent-profiles.json"))
+        .expect("valid built-in agent profiles")
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+pub struct CatalogSite {
+    pub name: String,
+    pub url: String,
+}
+impl CatalogSite {
+    pub fn legacy(value: &str) -> Self {
+        let value = value.trim().trim_end_matches('/');
+        let (name, url) = match value.to_ascii_lowercase().as_str() {
+            "clawhub" | "clawhub.ai" | "https://clawhub.ai" => ("ClawHub", "https://clawhub.ai"),
+            "skillhub" | "skillhub.cn" | "https://skillhub.cn" | "https://api.skillhub.cn" => {
+                ("SkillHub", "https://skillhub.cn")
+            }
+            "skills.sh" | "https://skills.sh" | "https://www.skills.sh" => {
+                ("Skills.sh", "https://skills.sh")
+            }
+            _ => (value, value),
+        };
+        Self {
+            name: name.into(),
+            url: url.into(),
+        }
+    }
+}
+impl<'de> Deserialize<'de> for CatalogSite {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Existing state files and older CLI clients used string arrays.
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum StoredSite {
+            Named { name: String, url: String },
+            Legacy(String),
+        }
+        Ok(match StoredSite::deserialize(deserializer)? {
+            StoredSite::Named { name, url } => Self { name, url },
+            StoredSite::Legacy(value) => Self::legacy(&value),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct Settings {
+    #[serde(default = "default_backup_retention")]
+    pub backup_retention: u32,
+    #[serde(default = "default_agent_profiles")]
+    pub agent_profiles: Vec<AgentProfile>,
     #[serde(default = "default_sites")]
-    pub catalog_sites: Vec<String>,
+    pub catalog_sites: Vec<CatalogSite>,
     pub close_to_tray: bool,
     pub theme: String,
     pub update_mode: String,
     pub update_endpoint: String,
     pub update_public_key: String,
 }
-pub fn default_sites() -> Vec<String> {
-    vec!["clawhub".into(), "skillhub".into(), "skills.sh".into()]
+pub fn default_backup_retention() -> u32 {
+    3
+}
+pub fn default_sites() -> Vec<CatalogSite> {
+    ["clawhub", "skillhub", "skills.sh"]
+        .into_iter()
+        .map(CatalogSite::legacy)
+        .collect()
 }
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            backup_retention: default_backup_retention(),
             catalog_sites: default_sites(),
+            agent_profiles: default_agent_profiles(),
             close_to_tray: true,
             theme: "light".into(),
             update_mode: "off".into(),
@@ -118,7 +194,63 @@ impl Default for Settings {
 }
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+pub struct PackageScope {
+    #[serde(default)]
+    pub origin_path: String,
+    pub source_id: String,
+    pub prefix: String,
+    pub excluded: Vec<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillPackage {
+    #[serde(default)]
+    pub missing_member_ids: Vec<String>,
+    #[serde(default)]
+    pub issues: Vec<String>,
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub scopes: Vec<PackageScope>,
+    pub member_ids: Vec<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PresetPackage {
+    pub preset_id: String,
+    pub package_id: String,
+    pub auto_add: bool,
+    pub excluded_ids: Vec<String>,
+    pub selected_ids: Vec<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PresetApplication {
+    pub preset_id: String,
+    pub target_id: String,
+    pub follow: bool,
+    pub applied_revision: u32,
+    pub error: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalInstallation {
+    pub skill_id: String,
+    pub target_id: String,
+    pub path: String,
+    pub entity_path: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct Snapshot {
+    #[serde(default)]
+    pub packages: Vec<SkillPackage>,
+    #[serde(default)]
+    pub preset_packages: Vec<PresetPackage>,
+    #[serde(default)]
+    pub preset_applications: Vec<PresetApplication>,
+    #[serde(default)]
+    pub external_installations: Vec<ExternalInstallation>,
     pub initialized: bool,
     pub storage_root: String,
     pub revision: u32,
@@ -138,6 +270,10 @@ pub fn schema_version() -> u32 {
 impl Snapshot {
     pub fn empty(root: String) -> Self {
         Self {
+            packages: vec![],
+            preset_packages: vec![],
+            preset_applications: vec![],
+            external_installations: vec![],
             initialized: false,
             storage_root: root,
             revision: 0,
@@ -148,7 +284,7 @@ impl Snapshot {
             presets: vec![],
             tasks: vec![],
             settings: Settings::default(),
-            schema_version: 1,
+            schema_version: 2,
         }
     }
 }

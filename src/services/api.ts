@@ -1,5 +1,13 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { CatalogResult, DistributionPlan, ScanResult, Snapshot, Target, Skill } from './types'
+import type {
+  CatalogResult,
+  DistributionPlan,
+  ScanResult,
+  Snapshot,
+  Target,
+  Skill,
+  PresetPackage,
+} from './types'
 import * as demo from './demo'
 
 export const isNative = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
@@ -18,13 +26,184 @@ async function native<T>(action: string, args: Record<string, unknown> = {}): Pr
   }
 }
 
+export interface BackupEntry {
+  id: string
+  createdAt: string
+  status: string
+  paths: string[]
+  issues: string[]
+}
+
+export interface RestorePreview {
+  revision: number
+  items: { digest: string; path: string; status: string; reason: string; fingerprint: string }[]
+}
+
+export interface CleanupChoice {
+  digest: string
+  fingerprint: string
+}
+export interface CleanupReport {
+  id: string
+  status: string
+  items: RestorePreview['items']
+}
+
+export interface PresetFolderPreview {
+  packageId?: string | null
+  removed?: { skillId: string; name: string; path: string }[]
+  root: string
+  revision: number
+  items: {
+    path: string
+    name: string
+    description: string
+    existingId: string | null
+    snapshotId: string | null
+    change?: 'added' | 'changed' | 'unchanged'
+    existingLinks: string[]
+    sameName: boolean
+    error?: string
+    entryPath?: string
+  }[]
+  warnings: string[]
+}
+
+export interface SourceBindingInput {
+  sourceId: string
+  kind: 'git' | 'local'
+  url: string
+  path: string
+  reference: string
+  subdir: string
+}
+
 export const api = {
+  importPackage: (
+    path: string,
+    selectedPaths: string[],
+    revision: number,
+  ): Promise<{ snapshot: Snapshot; packageId: string; skillIds: string[] }> =>
+    isNative
+      ? native('import_package', { path, selectedPaths, revision })
+      : Promise.reject(new Error('请在桌面应用中同步本机包')),
+  packageMigrationPreview: (
+    path: string,
+  ): Promise<{ items: { path: string; entity: string; status: string; reason: string }[] }> =>
+    native('package_migration_preview', { path }),
+  retryPresetSync: (): Promise<Snapshot> => native('retry_preset_sync'),
+  setPresetFollow: (presetId: string, targetId: string, follow: boolean): Promise<Snapshot> =>
+    native('set_preset_follow', { presetId, targetId, follow }),
+  previewBindSource: (
+    input: SourceBindingInput,
+  ): Promise<{ revision: number; digest: string; memberNames: string[] }> =>
+    isNative
+      ? native('preview_bind_source', { ...input })
+      : Promise.reject(new Error('请在桌面应用中核对真实更新来源')),
+  bindSource: (
+    input: SourceBindingInput,
+    expectedRevision: number,
+    digest: string,
+  ): Promise<Snapshot> =>
+    isNative
+      ? native('bind_source', { ...input, expectedRevision, digest })
+      : Promise.reject(new Error('请在桌面应用中配置真实更新来源')),
+
+  previewSnapshotRefresh: (
+    skillId: string,
+  ): Promise<{ revision: number; contentDigest: string; skillCount: number; path: string }> =>
+    isNative
+      ? native('preview_snapshot_refresh', { skillId })
+      : Promise.reject(new Error('请在桌面应用中重新收录')),
+  refreshSnapshot: (
+    skillId: string,
+    expectedRevision: number,
+    contentDigest: string,
+  ): Promise<Snapshot> =>
+    isNative
+      ? native('refresh_snapshot', { skillId, expectedRevision, contentDigest })
+      : Promise.reject(new Error('请在桌面应用中重新收录')),
+
+  previewPresetFolder: async (path: string): Promise<PresetFolderPreview> => {
+    if (isNative) return native('preview_preset_folder', { path })
+    const [scan, state] = await Promise.all([demo.demoScan(path), demo.demoSnapshot()])
+    return {
+      root: path,
+      revision: state.revision,
+      warnings: scan.warnings,
+      items: scan.items
+        .filter((item) => ['ready', 'new', 'same'].includes(item.status))
+        .map((item) => ({
+          ...item,
+          existingId: null,
+          snapshotId: null,
+          existingLinks: [],
+          sameName: false,
+        })),
+    }
+  },
+  importPresetFolder: (
+    path: string,
+    selectedPaths: string[],
+    mode: 'reference' | 'copy',
+    revision: number,
+  ): Promise<{ snapshot: Snapshot; skillIds: string[] }> =>
+    isNative
+      ? native('import_preset_folder', { path, selectedPaths, mode, revision })
+      : Promise.reject(new Error('请在桌面应用中引用或导入本机 Skill 包')),
+
+  openDirectory: (path: string, revealLink = false): Promise<void> =>
+    isNative
+      ? invoke('open_directory', { path, revealLink })
+      : Promise.reject(new Error('请在桌面应用中打开本机目录')),
+  previewObjectCleanup: (): Promise<RestorePreview> =>
+    isNative
+      ? native('preview_object_cleanup')
+      : demo.demoSnapshot().then((state) => ({ revision: state.revision, items: [] })),
+  listObjectCleanups: (): Promise<CleanupReport[]> =>
+    isNative ? native('list_object_cleanups') : Promise.resolve([]),
+  cleanupObjects: (expectedRevision: number, items: CleanupChoice[]): Promise<Snapshot> =>
+    isNative
+      ? native('cleanup_objects', { expectedRevision, items })
+      : Promise.reject(new Error('请在桌面应用中清理本机实体')),
+  retryObjectCleanup: (taskId: string): Promise<Snapshot> =>
+    isNative
+      ? native('retry_object_cleanup', { taskId })
+      : Promise.reject(new Error('请在桌面应用中重试清理')),
+  previewRestore: (backupId: string): Promise<RestorePreview> =>
+    isNative
+      ? native('preview_restore', { backupId })
+      : demo.demoSnapshot().then((state) => ({ revision: state.revision, items: [] })),
+  retryBackupCleanup: (): Promise<Snapshot> =>
+    isNative ? native('retry_backup_cleanup') : demo.demoSnapshot(),
+  listBackups: (): Promise<BackupEntry[]> =>
+    isNative ? native('list_backups') : Promise.resolve([]),
+  restoreBackup: (
+    backupId: string,
+    expectedRevision?: number,
+    cleanupItems: CleanupChoice[] = [],
+  ): Promise<Snapshot> =>
+    isNative
+      ? native('restore_backup', { backupId, expectedRevision, cleanupItems })
+      : Promise.reject(new Error('请在桌面应用中恢复本机备份')),
   snapshot: (): Promise<Snapshot> => (isNative ? native('snapshot') : demo.demoSnapshot()),
   configure: (path: string): Promise<Snapshot> =>
     isNative ? native('configure', { path }) : demo.demoConfigure(path),
   scan: (path: string): Promise<ScanResult> =>
     isNative ? native('scan', { path }) : demo.demoScan(path),
+  scanMany: (paths: string[]): Promise<ScanResult> =>
+    isNative ? native('scan_many', { paths }) : demo.demoScanMany(paths),
   discover: (): Promise<Target[]> => (isNative ? native('discover') : demo.demoDiscover()),
+  importBatch: async (
+    groups: { path: string; selectedPaths: string[] }[],
+    adopt: boolean,
+  ): Promise<Snapshot> => {
+    if (isNative) return native('import_batch', { groups, adopt })
+    let state = await demo.demoSnapshot()
+    for (const group of groups)
+      state = await demo.demoImportFolder(group.path, group.selectedPaths, adopt)
+    return state
+  },
   importFolder: (path: string, selectedPaths: string[], adopt: boolean): Promise<Snapshot> =>
     isNative
       ? native('import_folder', { path, selectedPaths, adopt })
@@ -42,11 +221,17 @@ export const api = {
     targetIds: string[],
     expectedRevision: number,
     claim?: string,
+    takeover = false,
   ): Promise<Snapshot> =>
     isNative
       ? claim?.startsWith('preset:')
-        ? native('apply_preset', { presetId: claim.slice(7), targetIds, expectedRevision })
-        : native('distribute', { skillIds, targetIds, claim, expectedRevision })
+        ? native('apply_preset', {
+            presetId: claim.slice(7),
+            targetIds,
+            expectedRevision,
+            takeover,
+          })
+        : native('distribute', { skillIds, targetIds, claim, expectedRevision, takeover })
       : demo.demoDistribute(skillIds, targetIds, claim, expectedRevision),
   revoke: (bindingIds: string[], claim?: string): Promise<Snapshot> =>
     isNative ? native('revoke', { bindingIds, claim }) : demo.demoRevoke(bindingIds, claim),
@@ -55,14 +240,17 @@ export const api = {
     name: string
     description: string
     skillIds: string[]
+    packages?: PresetPackage[]
+    syncApplied?: boolean
   }): Promise<Snapshot> => (isNative ? native('save_preset', input) : demo.demoSavePreset(input)),
   applyPreset: (
     presetId: string,
     targetIds: string[],
     expectedRevision: number,
+    takeover = false,
   ): Promise<Snapshot> =>
     isNative
-      ? native('apply_preset', { presetId, targetIds, expectedRevision })
+      ? native('apply_preset', { presetId, targetIds, expectedRevision, takeover })
       : demo.demoApplyPreset(presetId, targetIds, expectedRevision),
   revokePreset: (presetId: string, targetIds: string[]): Promise<Snapshot> =>
     isNative

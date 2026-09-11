@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { distributionActionLabel } from '@/services/distributionLabels'
+import SkillDirectoryActions from '@/components/SkillDirectoryActions.vue'
 import { computed, ref, watch } from 'vue'
 import { Link2, AlertTriangle } from 'lucide-vue-next'
 import AppDialog from './ui/AppDialog.vue'
@@ -23,6 +25,7 @@ const app = useAppStore()
 const targetIds = ref<string[]>([])
 const plan = ref<DistributionPlan | null>(null)
 const busy = ref(false)
+const takeover = ref(false)
 const localError = ref('')
 const selectedSkills = computed(
   () => app.snapshot?.skills.filter((skill) => props.skillIds.includes(skill.id)) ?? [],
@@ -34,6 +37,7 @@ watch(
     if (open) {
       targetIds.value = [...props.initialTargetIds]
       plan.value = null
+      takeover.value = false
       localError.value = ''
     }
   },
@@ -55,9 +59,20 @@ async function preview() {
 }
 async function submit() {
   if (!plan.value) return
+  if (plan.value.items.some((i) => i.action === 'takeover') && !takeover.value) {
+    localError.value = '请确认接管已有链接'
+    return
+  }
   busy.value = true
   const ok = await app.mutate(
-    () => api.distribute(props.skillIds, targetIds.value, plan.value!.revision, props.claim),
+    () =>
+      api.distribute(
+        props.skillIds,
+        targetIds.value,
+        plan.value!.revision,
+        props.claim,
+        takeover.value,
+      ),
     '分发任务已完成',
   )
   busy.value = false
@@ -87,6 +102,7 @@ async function submit() {
             <div class="choice-main">
               <div class="choice-title">{{ skill.name }}</div>
               <div class="choice-meta">版本 {{ skill.version }}</div>
+              <SkillDirectoryActions :skill="skill" />
             </div>
           </div>
         </div>
@@ -97,7 +113,7 @@ async function submit() {
           <label v-for="target in app.snapshot?.targets" :key="target.id" class="choice"
             ><input v-model="targetIds" class="checkbox" type="checkbox" :value="target.id" />
             <div class="choice-main">
-              <div class="choice-title">{{ target.name }}</div>
+              <div class="choice-title">{{ app.targetName(target) }}</div>
               <div class="choice-meta mono">{{ target.path }}</div>
             </div></label
           >
@@ -119,12 +135,15 @@ async function submit() {
           <div class="list-row-main">
             <div class="list-row-title">
               {{ app.snapshot?.skills.find((skill) => skill.id === item.skillId)?.name }} →
-              {{ app.snapshot?.targets.find((target) => target.id === item.targetId)?.name }}
+              {{
+                app.targetName(app.snapshot?.targets.find((target) => target.id === item.targetId))
+              }}
             </div>
             <div class="list-row-meta mono">{{ item.path }}</div>
+            <SkillDirectoryActions :skill-id="item.skillId" />
           </div>
           <Badge :tone="item.error ? 'red' : item.action === 'keep' ? 'neutral' : 'blue'">{{
-            item.error || (item.action === 'keep' ? '保留现有关系' : '创建软链')
+            item.error || distributionActionLabel(item.action)
           }}</Badge>
         </div>
       </div>
@@ -133,6 +152,11 @@ async function submit() {
       </div>
     </section>
     <p v-if="localError" class="field-error">{{ localError }}</p>
+    <label v-if="plan?.items.some((i) => i.action === 'takeover')" class="choice"
+      ><input v-model="takeover" class="checkbox" type="checkbox" /><span
+        >接管已有外部链接，切换到统一库版本；取消全部引用时恢复原链接。</span
+      ></label
+    >
     <template #footer
       ><Button v-if="plan" @click="plan = null">返回选择</Button
       ><Button v-else @click="emit('update:open', false)">取消</Button

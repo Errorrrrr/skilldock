@@ -1,7 +1,8 @@
 import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { api, isNative } from '@/services/api'
-import type { Snapshot } from '@/services/types'
+import type { Snapshot, Source, Target } from '@/services/types'
+import { sourceDisplayName, targetDisplayName } from '@/services/agentProfiles'
 
 export const useAppStore = defineStore('app', () => {
   const snapshot = ref<Snapshot | null>(null)
@@ -77,6 +78,12 @@ export const useAppStore = defineStore('app', () => {
   function clearError() {
     error.value = ''
   }
+  function targetName(target: Target | undefined) {
+    return targetDisplayName(target, snapshot.value?.settings.agentProfiles)
+  }
+  function sourceName(source: Source | null | undefined) {
+    return sourceDisplayName(source, snapshot.value?.settings.agentProfiles)
+  }
 
   return {
     snapshot,
@@ -91,6 +98,8 @@ export const useAppStore = defineStore('app', () => {
     refresh,
     mutate,
     clearError,
+    targetName,
+    sourceName,
     stopPolling: () => {
       if (polling) clearInterval(polling)
       if (noticeTimer) clearTimeout(noticeTimer)

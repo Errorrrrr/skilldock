@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, type Component } from 'vue'
+import { computed, ref, watch, type Component } from 'vue'
 import {
   ListChecks,
   RotateCcw,
@@ -11,11 +11,15 @@ import {
   XCircle,
   Search,
 } from 'lucide-vue-next'
+import BackupManager from '@/components/BackupManager.vue'
 import Button from '@/components/ui/Button.vue'
 import Badge from '@/components/ui/Badge.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
+import AppPagination from '@/components/ui/AppPagination.vue'
 import { useAppStore } from '@/stores/app'
 import { api } from '@/services/api'
 import { formatDate } from '@/lib/utils'
+import { usePagination } from '@/composables/usePagination'
 
 const app = useAppStore()
 const expanded = ref<string[]>([])
@@ -37,6 +41,20 @@ function toggle(id: string) {
 async function recover(id: string) {
   await app.mutate(() => api.recover(id), '任务恢复完成')
 }
+
+const filteredTasks = computed(() =>
+  (app.snapshot?.tasks ?? []).filter(
+    (t) => !filter.value || `${t.title}${t.message}`.includes(filter.value),
+  ),
+)
+const {
+  page,
+  pageSize,
+  pagedItems: pagedTasks,
+  resetPage,
+} = usePagination(filteredTasks, { initialPageSize: 10 })
+
+watch(filter, resetPage)
 </script>
 
 <template>
@@ -48,6 +66,7 @@ async function recover(id: string) {
       </div>
       <Button @click="app.refresh()"><RotateCcw />刷新记录</Button>
     </header>
+    <BackupManager />
     <section class="panel">
       <div class="toolbar">
         <div class="search-field">
@@ -56,10 +75,13 @@ async function recover(id: string) {
         <Badge>{{ app.snapshot?.tasks.length || 0 }} 条记录</Badge>
       </div>
       <div class="list-stack" style="padding: 12px">
+        <EmptyState
+          v-if="!filteredTasks.length"
+          title="未找到匹配记录"
+          description="没有符合搜索条件的任务历史记录。"
+        />
         <article
-          v-for="task in app.snapshot?.tasks.filter(
-            (t) => !filter || `${t.title}${t.message}`.includes(filter),
-          )"
+          v-for="task in pagedTasks"
           :key="task.id"
           class="list-row"
           style="align-items: flex-start"
@@ -84,6 +106,12 @@ async function recover(id: string) {
             @click="recover(task.id)"
             ><RotateCcw />恢复</Button
           ><Button
+            v-if="task.kind === 'backup_cleanup' && task.status === 'failed'"
+            size="sm"
+            :disabled="app.loading"
+            @click="app.mutate(() => api.retryBackupCleanup(), '已重新检查备份清理')"
+            >重试清理</Button
+          ><Button
             size="icon"
             variant="ghost"
             :aria-label="expanded.includes(task.id) ? '收起详情' : '展开详情'"
@@ -92,6 +120,13 @@ async function recover(id: string) {
           /></Button>
         </article>
       </div>
+      <AppPagination
+        v-if="filteredTasks.length"
+        v-model:page="page"
+        v-model:page-size="pageSize"
+        :total="filteredTasks.length"
+        :page-size-options="[10, 20, 50]"
+      />
     </section>
   </div>
 </template>

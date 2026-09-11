@@ -103,7 +103,32 @@ pub fn clean_name(name: &str) -> Result<String> {
     }
     Ok(n.into())
 }
+// Check directory entries, not a case-insensitive filesystem lookup: a reference
+// named `skill.md` is not the `SKILL.md` entry point on macOS or Windows.
+pub fn has_skill_entry(path: &Path) -> bool {
+    fs::read_dir(path).is_ok_and(|entries| {
+        entries.filter_map(|entry| entry.ok()).any(|entry| {
+            entry.file_name() == std::ffi::OsStr::new("SKILL.md") && entry.path().is_file()
+        })
+    })
+}
+
+// Only reserve resource directories beneath an actual Skill. A package may
+// legitimately have a top-level directory called references or scripts.
+fn is_skill_resource(path: &Path) -> bool {
+    path.ancestors().any(|directory| {
+        matches!(
+            directory.file_name().and_then(|name| name.to_str()),
+            Some("references" | "assets" | "scripts")
+        ) && directory.parent().is_some_and(has_skill_entry)
+    })
+}
+
 pub fn metadata(path: &Path) -> Result<(String, String)> {
+    if !has_skill_entry(path) {
+        return fail("目录缺少精确命名的 SKILL.md 入口，普通 skill.md 资料不作为成员");
+    }
+
     let file = path.join("SKILL.md");
     if fs::metadata(&file)?.len() > 1024 * 1024 {
         return fail("SKILL.md 超过 1 MiB 限制");
@@ -143,6 +168,7 @@ pub fn metadata(path: &Path) -> Result<(String, String)> {
     };
     Ok((clean_name(&name)?, description))
 }
+// Discovery exclusions must never be reused for copying or backup integrity.
 fn included(entry: &walkdir::DirEntry) -> bool {
     let n = entry.file_name().to_string_lossy();
     !matches!(n.as_ref(), ".git" | "node_modules" | "target" | ".system")
@@ -161,7 +187,7 @@ pub fn scan(path: &Path) -> Result<ScanResult> {
         .follow_links(false)
         .max_depth(12)
         .into_iter()
-        .filter_entry(included)
+        .filter_entry(|entry| included(entry) && !is_skill_resource(entry.path()))
     {
         let e = match entry {
             Ok(e) => e,
@@ -171,21 +197,44 @@ pub fn scan(path: &Path) -> Result<ScanResult> {
             }
         };
         if e.file_type().is_symlink() {
+            let target_path = fs::read_link(e.path()).ok();
+            let is_alive = e.path().exists();
+            let description = match &target_path {
+                Some(target) => format!("指向：{}", target.display()),
+                None => String::new(),
+            };
+            let (status, error) = if is_alive {
+                let target_info = target_path
+                    .as_ref()
+                    .map(|t| format!("（指向 {}）", t.display()))
+                    .unwrap_or_default();
+                (
+                    "linked",
+                    format!(
+                        "外部已有软链{}。SkillDock 完整保留原样，不自动接管；如需归集请选择原始实体目录。",
+                        target_info
+                    ),
+                )
+            } else {
+                let target_info = target_path
+                    .as_ref()
+                    .map(|t| format!("（指向 {}）", t.display()))
+                    .unwrap_or_default();
+                (
+                    "broken",
+                    format!("软链目标不存在{}，链接已失效。", target_info),
+                )
+            };
             result.items.push(ScanItem {
                 path: e.path().display().to_string(),
                 name: e.file_name().to_string_lossy().into(),
-                description: String::new(),
-                status: if e.path().exists() {
-                    "linked"
-                } else {
-                    "broken"
-                }
-                .into(),
-                error: "现有软链仅展示，不自动接管或跟随扫描".into(),
+                description,
+                status: status.into(),
+                error,
             });
             continue;
         }
-        if e.file_type().is_dir() && e.path().join("SKILL.md").is_file() {
+        if e.file_type().is_dir() && has_skill_entry(e.path()) {
             let (name, description, status, error) = match metadata(e.path()) {
                 Ok((n, d)) => (n, d, "ready".into(), String::new()),
                 Err(error) => (
@@ -207,6 +256,18 @@ pub fn scan(path: &Path) -> Result<ScanResult> {
     Ok(result)
 }
 pub fn tree_digest(root: &Path) -> Result<String> {
+    digest_tree(root, false)
+}
+
+pub fn content_digest(root: &Path) -> Result<String> {
+    digest_tree(root, true)
+}
+
+pub fn snapshot_matches(root: &Path, expected: &str) -> Result<bool> {
+    Ok(tree_digest(root)? == expected || content_digest(root)? == expected)
+}
+
+fn digest_tree(root: &Path, ignore_finder: bool) -> Result<String> {
     let canonical = fs::canonicalize(root)?;
     if fs::symlink_metadata(root)?.file_type().is_symlink() {
         return fail("不能把软链自身作为新来源，请选择原始内容目录");
@@ -218,10 +279,13 @@ pub fn tree_digest(root: &Path) -> Result<String> {
         .follow_links(false)
         .sort_by_file_name()
         .into_iter()
-        .filter_entry(included)
     {
         let e = entry.map_err(|e| crate::error::Error::Message(e.to_string()))?;
         let rel = e.path().strip_prefix(root).unwrap();
+        // Finder writes these view preferences while browsing an otherwise unchanged Skill.
+        if ignore_finder && e.file_type().is_file() && e.file_name() == ".DS_Store" {
+            continue;
+        }
         if rel.as_os_str().is_empty() {
             continue;
         }
@@ -273,11 +337,34 @@ pub fn tree_digest(root: &Path) -> Result<String> {
                 hash.update(&buf[..n]);
             }
         } else {
-            return fail("来源包含不支持的特殊文件");
+            return fail(format!("来源包含不支持的特殊文件：{}", e.path().display()));
         }
     }
     Ok(format!("{:x}", hash.finalize()))
 }
+/// Exclusions apply to portable local imports only, never to backups or adoption.
+pub fn local_import_exclusions(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut excluded = vec![];
+    let mut entries = WalkDir::new(root).follow_links(false).into_iter();
+    while let Some(entry) = entries.next() {
+        let entry = entry.map_err(|e| crate::error::Error::Message(e.to_string()))?;
+        if entry.depth() == 0 {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy();
+        if name == ".git"
+            || (matches!(name.as_ref(), ".venv" | "__pycache__")
+                && (entry.file_type().is_dir() || entry.file_type().is_symlink()))
+        {
+            excluded.push(entry.path().to_path_buf());
+            if entry.file_type().is_dir() {
+                entries.skip_current_dir();
+            }
+        }
+    }
+    Ok(excluded)
+}
+
 pub fn copy_tree(from: &Path, to: &Path) -> Result<()> {
     copy_tree_excluding(from, to, &[])
 }
@@ -287,7 +374,7 @@ pub fn copy_tree_excluding(from: &Path, to: &Path, excluded: &[PathBuf]) -> Resu
         .follow_links(false)
         .sort_by_file_name()
         .into_iter()
-        .filter_entry(|e| included(e) && !excluded.iter().any(|p| e.path().starts_with(p)))
+        .filter_entry(|e| !excluded.iter().any(|p| e.path().starts_with(p)))
     {
         let e = entry.map_err(|e| crate::error::Error::Message(e.to_string()))?;
         let rel = e.path().strip_prefix(from).unwrap();
@@ -305,16 +392,28 @@ pub fn copy_tree_excluding(from: &Path, to: &Path, excluded: &[PathBuf]) -> Resu
         } else if e.file_type().is_symlink() {
             create_link(&fs::read_link(e.path())?, &dst, e.path().is_dir())?;
         } else {
-            return fail("不支持的文件类型");
+            return fail(format!("不支持的文件类型：{}", e.path().display()));
         }
     }
     Ok(())
 }
 pub fn snapshot_tree(root: &Path, source: &Path) -> Result<String> {
-    let digest = tree_digest(source)?;
+    snapshot_tree_with(root, source, tree_digest)
+}
+
+pub fn snapshot_current_content(root: &Path, source: &Path) -> Result<String> {
+    snapshot_tree_with(root, source, content_digest)
+}
+
+fn snapshot_tree_with(
+    root: &Path,
+    source: &Path,
+    digest_fn: fn(&Path) -> Result<String>,
+) -> Result<String> {
+    let digest = digest_fn(source)?;
     let target = root.join("objects").join(&digest).join("tree");
     if target.exists() {
-        if tree_digest(&target)? != digest {
+        if digest_fn(&target)? != digest {
             return fail("中央库快照已被外部修改，请先修复");
         }
         return Ok(digest);
@@ -324,7 +423,7 @@ pub fn snapshot_tree(root: &Path, source: &Path) -> Result<String> {
         .prefix(".skilldock-")
         .tempdir_in(root.join("objects"))?;
     copy_tree(source, &temp.path().join("tree"))?;
-    if tree_digest(&temp.path().join("tree"))? != digest || tree_digest(source)? != digest {
+    if digest_fn(&temp.path().join("tree"))? != digest || digest_fn(source)? != digest {
         return fail("复制期间来源发生变化，请重新扫描");
     }
     fs::rename(temp.path(), target.parent().unwrap())?;
@@ -383,8 +482,40 @@ pub struct Change {
     pub before: Option<PathBuf>,
     pub after: Option<PathBuf>,
     pub backup: Option<PathBuf>,
+    #[serde(default)]
+    pub restore: bool,
+    #[serde(default)]
+    pub backup_digest: Option<String>,
 }
 pub fn apply(change: &Change) -> Result<()> {
+    if change.restore {
+        let backup = change
+            .backup
+            .as_ref()
+            .ok_or_else(|| crate::error::Error::Message("恢复记录缺少备份".into()))?;
+        if let Some(parent) = change.path.parent() {
+            if fs::canonicalize(parent)? != parent {
+                return fail("原目录父路径已变化");
+            }
+        }
+        if let Some(expected) = &change.backup_digest {
+            if manifest_digest(backup)? != *expected {
+                return fail("备份在校验后发生变化");
+            }
+        } else if !backup.is_dir() {
+            return fail("备份缺失");
+        }
+        if let Some(link) = &change.after {
+            if fs::read_link(&change.path).ok().as_ref() != Some(link) {
+                return fail("原位置链接已变化");
+            }
+            remove_link(&change.path)?;
+        } else if exists(&change.path) {
+            return fail("原位置已被其他内容占用");
+        }
+        fs::rename(backup, &change.path)?;
+        return Ok(());
+    }
     if let Some(parent) = change.path.parent()
         && fs::canonicalize(parent)? != parent
     {
@@ -396,6 +527,11 @@ pub fn apply(change: &Change) -> Result<()> {
         }
         if exists(backup) {
             return fail("备份路径已存在");
+        }
+        if let Some(expected) = &change.backup_digest {
+            if manifest_digest(&change.path)? != *expected {
+                return fail("归集来源在校验后发生变化，未替换");
+            }
         }
         fs::rename(&change.path, backup)?;
     } else if let Some(before) = &change.before {
@@ -412,6 +548,30 @@ pub fn apply(change: &Change) -> Result<()> {
     Ok(())
 }
 pub fn undo(change: &Change) -> Result<()> {
+    if change.restore {
+        let backup = change
+            .backup
+            .as_ref()
+            .ok_or_else(|| crate::error::Error::Message("恢复记录缺少备份路径".into()))?;
+        if !exists(backup) {
+            if let Some(expected) = &change.backup_digest {
+                if manifest_digest(&change.path)? != *expected {
+                    return fail("恢复后的目录被修改，停止回滚");
+                }
+            }
+            fs::rename(&change.path, backup)?;
+        }
+        if let Some(link) = &change.after {
+            if !exists(&change.path) {
+                create_link(link, &change.path, true)?;
+            } else if fs::read_link(&change.path).ok().as_ref() != Some(link) {
+                return fail("恢复路径被外部内容占用");
+            }
+        } else if exists(&change.path) {
+            return fail("恢复路径被外部内容占用");
+        }
+        return Ok(());
+    }
     if let Some(backup) = &change.backup {
         if !exists(backup) {
             return Ok(());
@@ -444,4 +604,185 @@ pub fn undo(change: &Change) -> Result<()> {
         create_link(before, &change.path, true)?;
     }
     Ok(())
+}
+
+/// Deduplicate physical scan roots first, then Skill directories shared by
+/// overlapping roots. Do not merge distinct Skill folders just for equal names.
+pub fn scan_many(paths: &[String]) -> Result<ScanResult> {
+    let mut roots = std::collections::BTreeMap::<PathBuf, PathBuf>::new();
+    for path in paths {
+        let path = absolute(path)?;
+        let physical = fs::canonicalize(&path)?;
+        match roots.get(&physical) {
+            Some(existing) if !fs::symlink_metadata(existing)?.file_type().is_symlink() => {}
+            _ => {
+                roots.insert(physical, path);
+            }
+        }
+    }
+    let mut result = ScanResult {
+        root: String::new(),
+        items: vec![],
+        warnings: vec![],
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    for path in roots.values() {
+        let scanned = scan(path)?;
+        result.warnings.extend(scanned.warnings);
+        for item in scanned.items {
+            let path = PathBuf::from(&item.path);
+            // Existing links are separate installation locations, not skill
+            // content. Keep each link visible without traversing its target.
+            let key = if item.status == "linked" || item.status == "broken" {
+                path.parent()
+                    .and_then(|parent| fs::canonicalize(parent).ok())
+                    .map(|parent| parent.join(path.file_name().unwrap_or_default()))
+                    .unwrap_or(path)
+            } else {
+                fs::canonicalize(&path).unwrap_or(path)
+            };
+            if seen.insert(key) {
+                result.items.push(item);
+            }
+        }
+    }
+    Ok(result)
+}
+
+#[cfg(test)]
+mod scan_dedup_tests {
+    use super::*;
+    #[test]
+    fn duplicate_and_overlapping_roots_return_each_skill_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill = dir.path().join("nested/example");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(skill.join("SKILL.md"), "# Example").unwrap();
+        let root = dir.path().display().to_string();
+        let scan = scan_many(&[
+            root.clone(),
+            format!("{root}/"),
+            skill.display().to_string(),
+        ])
+        .unwrap();
+        assert_eq!(
+            scan.items
+                .iter()
+                .filter(|item| item.status == "ready")
+                .count(),
+            1
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn alias_root_and_real_root_are_scanned_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        let alias = dir.path().join("alias");
+        fs::create_dir_all(real.join("example")).unwrap();
+        fs::write(real.join("example/SKILL.md"), "# Example").unwrap();
+        std::os::unix::fs::symlink(&real, &alias).unwrap();
+        let result = scan_many(&[alias.display().to_string(), real.display().to_string()]).unwrap();
+        assert_eq!(result.items.len(), 1);
+        assert_eq!(result.items[0].status, "ready");
+    }
+    #[test]
+    fn same_name_in_different_folders_is_not_merged() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["a", "b"] {
+            fs::create_dir_all(dir.path().join(name)).unwrap();
+            fs::write(
+                dir.path().join(name).join("SKILL.md"),
+                "---\nname: example\n---\n",
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            scan_many(&[dir.path().display().to_string()])
+                .unwrap()
+                .items
+                .len(),
+            2
+        );
+    }
+}
+
+/// A portable inventory. Symlinks are hashed as link text, never followed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TreeEntry {
+    pub relative: String,
+    pub kind: String,
+    pub digest: String,
+}
+
+pub fn tree_manifest(root: &Path, legacy_filter: bool) -> Result<Vec<TreeEntry>> {
+    if !fs::symlink_metadata(root)?.is_dir() {
+        return fail("校验目录不是实体文件夹");
+    }
+    let mut entries = vec![];
+    for entry in WalkDir::new(root)
+        .follow_links(false)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|e| e.depth() == 0 || !legacy_filter || included(e))
+    {
+        let entry = entry.map_err(|e| crate::error::Error::Message(e.to_string()))?;
+        if entry.depth() == 0 {
+            continue;
+        }
+        let relative = entry
+            .path()
+            .strip_prefix(root)
+            .unwrap()
+            .to_str()
+            .ok_or_else(|| crate::error::Error::Message("文件名编码无效".into()))?
+            .replace('\\', "/");
+        entries.push(manifest_entry(entry.path(), relative)?);
+    }
+    Ok(entries)
+}
+pub fn manifest_entry(path: &Path, relative: String) -> Result<TreeEntry> {
+    let file_type = fs::symlink_metadata(path)?.file_type();
+    let mut hash = Sha256::new();
+    let kind = if file_type.is_symlink() {
+        let link = fs::read_link(path)?;
+        hash.update(
+            link.to_str()
+                .ok_or_else(|| crate::error::Error::Message("链接编码无效".into()))?
+                .as_bytes(),
+        );
+        "link"
+    } else if file_type.is_dir() {
+        "directory"
+    } else if file_type.is_file() {
+        let meta = fs::metadata(path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            hash.update((meta.permissions().mode() & 0o111).to_le_bytes());
+        }
+        let mut input = fs::File::open(path)?;
+        let mut buffer = [0u8; 65536];
+        loop {
+            let count = input.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            hash.update(&buffer[..count]);
+        }
+        "file"
+    } else {
+        return fail(format!("来源包含不支持的特殊文件：{}", path.display()));
+    };
+    Ok(TreeEntry {
+        relative,
+        kind: kind.into(),
+        digest: format!("{:x}", hash.finalize()),
+    })
+}
+pub fn manifest_digest(root: &Path) -> Result<String> {
+    Ok(format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&tree_manifest(root, false)?)?)
+    ))
 }

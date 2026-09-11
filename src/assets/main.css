@@ -28,6 +28,12 @@
 * {
   box-sizing: border-box;
 }
+html,
+body,
+#app {
+  height: 100%;
+  overflow: hidden;
+}
 body {
   margin: 0;
   min-width: 360px;
@@ -99,7 +105,8 @@ p {
 .app-shell {
   display: grid;
   grid-template-columns: var(--nav-width) minmax(0, 1fr);
-  min-height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
 }
 .sidebar {
   position: fixed;
@@ -190,37 +197,12 @@ p {
   white-space: nowrap;
 }
 .workspace {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   grid-column: 2;
   min-width: 0;
   outline: none;
-}
-.topbar {
-  height: 56px;
-  padding: 0 36px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: var(--panel);
-  border-bottom: 1px solid var(--line);
-}
-.workspace-label {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--muted);
-}
-.global-search {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  border: 0;
-  padding: 6px 0 6px 10px;
-  background: none;
-  color: var(--muted);
-  font-size: 12px;
-}
-.global-search svg {
-  width: 15px;
-  height: 15px;
 }
 kbd {
   font:
@@ -233,8 +215,11 @@ kbd {
   color: var(--muted);
 }
 .content {
+  height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
   max-width: 1500px;
-  padding: 32px 36px 52px;
+  padding: 24px 32px;
   margin: auto;
 }
 .page {
@@ -953,6 +938,98 @@ kbd {
 .bulk-spacer {
   flex: 1;
 }
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  gap: 12px;
+  flex-wrap: wrap;
+  min-height: 52px;
+  box-sizing: border-box;
+}
+.pagination-compact {
+  padding: 10px 14px;
+  min-height: 44px;
+}
+.pagination-info {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.pagination-summary strong {
+  color: var(--ink);
+  font-weight: 500;
+}
+.pagination-sizer {
+  display: flex;
+  align-items: center;
+}
+.pagination-select {
+  height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
+  min-width: 100px;
+  border-radius: 6px;
+}
+.pagination-nav {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+}
+.pagination-list {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.pagination-btn {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 120ms var(--ease-out);
+}
+.pagination-btn:hover:not(:disabled) {
+  color: var(--ink);
+  background: var(--surface);
+}
+.pagination-btn.pagination-btn-active,
+.pagination-btn[data-state='selected'] {
+  color: #fff;
+  background: var(--blue);
+  border-color: var(--blue);
+}
+.pagination-btn-active:hover {
+  background: var(--blue) !important;
+  color: #fff !important;
+}
+.pagination-nav-btn {
+  padding: 0;
+  width: 30px;
+}
+.pagination-ellipsis {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 30px;
+  color: var(--muted);
+  font-size: 13px;
+  user-select: none;
+}
 .library-panel {
   border: 0;
   border-radius: 0;
@@ -1438,9 +1515,6 @@ kbd {
   .content {
     padding: 28px;
   }
-  .topbar {
-    padding: 0 28px;
-  }
   .step::after {
     width: 20px;
     margin: 0 10px;
@@ -1496,13 +1570,6 @@ kbd {
 @media (max-width: 640px) {
   .content {
     padding: 24px 18px 36px;
-  }
-  .topbar {
-    padding: 0 18px;
-  }
-  .global-search span,
-  .global-search kbd {
-    display: none;
   }
   .page-heading {
     align-items: flex-start;
@@ -1857,10 +1924,7 @@ body.tray-body #app {
 }
 .tray-ver {
   font-size: 10px;
-  font-family:
-    SFMono-Regular,
-    Menlo,
-    monospace;
+  font-family: SFMono-Regular, Menlo, monospace;
   color: var(--muted);
   padding: 1px 5px;
   border-radius: 4px;
@@ -1919,11 +1983,7 @@ body.tray-body #app {
   color: var(--ink);
   line-height: 1.1;
   font-variant-numeric: tabular-nums;
-  font-family:
-    -apple-system,
-    BlinkMacSystemFont,
-    'SF Pro Display',
-    sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
 }
 .tray-metric-lbl {
   font-size: 11px;
@@ -2031,12 +2091,7 @@ body.tray-body #app {
   text-align: left;
 }
 .tray-shortcut {
-  font-family:
-    -apple-system,
-    BlinkMacSystemFont,
-    SFMono-Regular,
-    Menlo,
-    monospace;
+  font-family: -apple-system, BlinkMacSystemFont, SFMono-Regular, Menlo, monospace;
   font-size: 10px;
   padding: 2px 5px;
   border-radius: 4px;
@@ -2213,3 +2268,43 @@ body.tray-body #app {
   background: #3f1515;
   color: #fca5a5;
 }
+
+/* Scan status tooltip (teleported to body via TooltipPortal) */
+.scan-status-tooltip {
+  z-index: 1000;
+  pointer-events: none;
+  width: max-content;
+  max-width: 320px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #1e293b;
+  color: #f8fafc;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  font-size: 12px;
+  line-height: 1.45;
+  animation: pop 100ms var(--ease-out);
+}
+.scan-status-tooltip-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.scan-status-tooltip-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: #ffffff;
+  white-space: nowrap;
+}
+.scan-status-tooltip-hint {
+  font-size: 11px;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+.scan-status-arrow {
+  fill: #1e293b;
+}
+
+
+/* Skill directory actions sit outside selection labels. */
+.skill-choice-label { display: flex; align-items: center; gap: 10px; min-width: 0; cursor: pointer; }

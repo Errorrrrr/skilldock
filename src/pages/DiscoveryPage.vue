@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import SkillDirectoryActions from '@/components/SkillDirectoryActions.vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
   Search,
   Globe2,
@@ -15,22 +16,29 @@ import EmptyState from '@/components/ui/EmptyState.vue'
 import AppSheet from '@/components/ui/AppSheet.vue'
 import AppDialog from '@/components/ui/AppDialog.vue'
 import DirectoryField from '@/components/DirectoryField.vue'
+import AppPagination from '@/components/ui/AppPagination.vue'
 import { api } from '@/services/api'
+import { defaultCatalogSites, normalizeCatalogSites, catalogSiteKey } from '@/services/catalogSites'
 import { useAppStore } from '@/stores/app'
 import type { CatalogItem } from '@/services/types'
+import { usePagination } from '@/composables/usePagination'
 
 const app = useAppStore()
 const query = ref('')
 const sites = computed(() =>
-  (app.snapshot?.settings.catalogSites || ['clawhub', 'skillhub', 'skills.sh']).map((value) => ({
-    label: value === 'clawhub' ? 'ClawHub' : value === 'skillhub' ? 'SkillHub' : value,
-    value,
+  normalizeCatalogSites(app.snapshot?.settings.catalogSites || defaultCatalogSites).map((site) => ({
+    label: site.name,
+    value: site.url,
     status: 'configured',
   })),
 )
-const selectedSites = ref<string[]>(
-  app.snapshot?.settings.catalogSites || ['clawhub', 'skillhub', 'skills.sh'],
-)
+const selectedSites = ref<string[]>(sites.value.map((site) => site.value))
+watch(sites, (next, previous) => {
+  const existing = new Set(previous.map((site) => site.value))
+  selectedSites.value = next
+    .filter((site) => selectedSites.value.includes(site.value) || !existing.has(site.value))
+    .map((site) => site.value)
+})
 const results = ref<CatalogItem[]>([])
 const errors = ref<string[]>([])
 const searching = ref(false)
@@ -51,12 +59,21 @@ const installed = computed(
     new Set(
       app.snapshot?.sources
         .filter((s) => ['catalog', 'clawhub'].includes(s.kind))
-        .map((s) => s.reference),
+        .map((s) => `${catalogSiteKey(s.url)}:${s.reference}`),
     ),
 )
 const siteLabel = (value: string) =>
-  sites.value.find((site) => site.value === value)?.label || value
+  sites.value.find((site) => catalogSiteKey(site.value) === catalogSiteKey(value))?.label || value
+
+const {
+  page,
+  pageSize,
+  pagedItems: pagedResults,
+  resetPage,
+} = usePagination(results, { initialPageSize: 12 })
+
 async function search() {
+  resetPage()
   if (app.isNative && !query.value.trim()) {
     errors.value = ['请输入搜索关键词；原生目录服务不支持空查询']
     return
@@ -95,7 +112,10 @@ async function install() {
     return
   }
   const source = app.snapshot?.sources.find(
-    (s) => s.reference === detail.value!.slug && ['catalog', 'clawhub'].includes(s.kind),
+    (s) =>
+      s.reference === detail.value!.slug &&
+      ['catalog', 'clawhub'].includes(s.kind) &&
+      catalogSiteKey(s.url) === catalogSiteKey(detail.value!.site),
   )
   const skill =
     app.snapshot?.skills.find((item) => item.sourceId === source?.id) ||
@@ -215,7 +235,7 @@ onMounted(() => {
         description="尝试更换关键词、启用更多站点，或使用 Git 仓库地址导入。"
       />
       <div v-else class="list-stack" style="padding: 14px">
-        <div v-for="item in results" :key="`${item.site}-${item.slug}`" class="list-row">
+        <div v-for="item in pagedResults" :key="`${item.site}-${item.slug}`" class="list-row">
           <div class="item-icon"><Globe2 /></div>
           <div class="list-row-main">
             <div class="list-row-title">
@@ -223,13 +243,22 @@ onMounted(() => {
               <Badge>{{ siteLabel(item.site) }}</Badge>
             </div>
             <div class="list-row-meta">{{ item.description }} · 版本 {{ item.version }}</div>
+            <SkillDirectoryActions :catalog="item" />
           </div>
-          <Badge v-if="installed.has(item.slug)" tone="green"><CheckCircle2 />已入库</Badge
+          <Badge v-if="installed.has(`${catalogSiteKey(item.site)}:${item.slug}`)" tone="green"
+            ><CheckCircle2 />已入库</Badge
           ><Button v-else variant="primary" size="sm" @click="startInstall(item)"
             ><Download />安装</Button
           ><Button size="sm" variant="ghost" @click="show(item)">详情</Button>
         </div>
       </div>
+      <AppPagination
+        v-if="results.length"
+        v-model:page="page"
+        v-model:page-size="pageSize"
+        :total="results.length"
+        :page-size-options="[12, 24, 48]"
+      />
     </section>
     <AppSheet
       v-model:open="detailOpen"
@@ -239,6 +268,7 @@ onMounted(() => {
         <Badge tone="blue">{{ siteLabel(detail?.site || '') }}</Badge
         ><Badge>v{{ detail?.version }}</Badge>
       </div>
+      <SkillDirectoryActions :catalog="detail" style="margin-bottom: 14px" />
       <dl class="detail-list">
         <div class="detail-row">
           <dt>来源网站</dt>
@@ -259,7 +289,7 @@ onMounted(() => {
       </dl>
       <div class="callout" style="margin-top: 16px">可用版本由站点返回；安装默认只进入中央库。</div>
       <Button
-        v-if="detail && !installed.has(detail.slug)"
+        v-if="detail && !installed.has(`${catalogSiteKey(detail.site)}:${detail.slug}`)"
         variant="primary"
         style="margin-top: 16px"
         @click="startInstall(detail)"
@@ -281,6 +311,7 @@ onMounted(() => {
               <div class="choice-meta">
                 {{ siteLabel(detail?.site || '') }} · v{{ detail?.version }}
               </div>
+              <SkillDirectoryActions :catalog="detail" />
             </div>
           </div>
           <div class="callout" style="margin-top: 10px">
@@ -298,7 +329,7 @@ onMounted(() => {
             ><label v-for="target in app.snapshot?.targets" :key="target.id" class="choice"
               ><input v-model="targetIds" class="checkbox" type="checkbox" :value="target.id" />
               <div class="choice-main">
-                <div class="choice-title">分发到 {{ target.name }}</div>
+                <div class="choice-title">分发到 {{ app.targetName(target) }}</div>
               </div></label
             >
           </div>

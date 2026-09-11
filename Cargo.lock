@@ -3928,6 +3928,7 @@ dependencies = [
 name = "skilldock-desktop"
 version = "0.1.0"
 dependencies = [
+ "block2",
  "objc2",
  "objc2-app-kit",
  "serde_json",
@@ -3941,6 +3942,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
  "tauri-plugin-window-state",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",

@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { isNative } from './api'
+import { librarySkillCount } from './librarySkills'
 
 export interface TrayStatus {
   paused: boolean
@@ -16,13 +17,16 @@ export async function trayAction(
 ): Promise<TrayStatus> {
   if (isNative) return invoke('tray_action', { action })
   if (action === 'pause') demoPaused = !demoPaused
+  const { demoSnapshot } = await import('./demo')
+  const snapshot = await demoSnapshot()
   return {
     paused: demoPaused,
     active: false,
-    skills: 12,
-    sources: 3,
-    scheduled: 0,
-    automatic: 0,
-    theme: 'light',
+    skills: librarySkillCount(snapshot),
+    sources: snapshot.sources.length,
+    scheduled: snapshot.sources.filter((source) => ['notify', 'auto'].includes(source.policy.mode))
+      .length,
+    automatic: snapshot.sources.filter((source) => source.policy.mode === 'auto').length,
+    theme: snapshot.settings.theme,
   }
 }

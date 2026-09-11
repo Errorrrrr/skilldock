@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { distributionActionLabel } from '@/services/distributionLabels'
+import SkillDirectoryActions from '@/components/SkillDirectoryActions.vue'
 import { computed, ref } from 'vue'
 import {
   Layers3,
@@ -18,9 +20,11 @@ import AppSheet from '@/components/ui/AppSheet.vue'
 import AppDialog from '@/components/ui/AppDialog.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import PresetEditorDialog from '@/components/PresetEditorDialog.vue'
+import AppPagination from '@/components/ui/AppPagination.vue'
 import { api } from '@/services/api'
 import { useAppStore } from '@/stores/app'
 import type { DistributionPlan, Preset } from '@/services/types'
+import { usePagination } from '@/composables/usePagination'
 
 const app = useAppStore()
 const editorOpen = ref(false)
@@ -33,6 +37,21 @@ const deleteOpen = ref(false)
 const targetIds = ref<string[]>([])
 const plan = ref<DistributionPlan | null>(null)
 const busy = ref(false)
+const takeover = ref(false)
+const applications = computed(() =>
+  (app.snapshot?.presetApplications ?? []).filter((a) => a.presetId === currentPreset.value?.id),
+)
+async function toggleFollow(targetId: string, follow: boolean) {
+  if (!currentPreset.value) return
+  await app.mutate(
+    () => api.setPresetFollow(currentPreset.value!.id, targetId, follow),
+    follow ? '已启用跟随更新' : '已固定当前安装版本',
+  )
+}
+async function retrySync() {
+  await app.mutate(() => api.retryPresetSync(), '已重试预设同步，请查看目标状态')
+}
+
 const currentPreset = computed(
   () => app.snapshot?.presets.find((p) => p.id === detail.value?.id) || detail.value,
 )
@@ -50,6 +69,30 @@ const appliedCount = (preset: Preset) =>
       .filter((b) => b.claims.includes(`preset:${preset.id}`))
       .map((b) => b.targetId),
   ).size
+const allPresets = computed(() => app.snapshot?.presets ?? [])
+const {
+  page: presetsPage,
+  pageSize: presetsPageSize,
+  pagedItems: pagedPresets,
+} = usePagination(allPresets, { initialPageSize: 10 })
+
+const presetSkillIds = computed(() => currentPreset.value?.skillIds ?? [])
+const presetMemberVersions = computed(() =>
+  Object.fromEntries(
+    presetSkillIds.value.map((id) => {
+      const member =
+        currentPreset.value?.locks[id] || app.snapshot?.skills.find((skill) => skill.id === id)
+      return [id, member?.externalPath ? '跟随本地内容' : `v${member?.version || '未知'}`]
+    }),
+  ),
+)
+const {
+  page: presetSkillsPage,
+  pageSize: presetSkillsSize,
+  pagedItems: pagedPresetSkillIds,
+  resetPage: resetPresetSkillsPage,
+} = usePagination(presetSkillIds, { initialPageSize: 10 })
+
 function create() {
   editing.value = null
   editorOpen.value = true
@@ -60,6 +103,7 @@ function edit(preset: Preset) {
 }
 function show(preset: Preset) {
   detail.value = preset
+  resetPresetSkillsPage()
   detailOpen.value = true
 }
 async function previewApply() {
@@ -79,9 +123,19 @@ async function previewApply() {
 }
 async function apply() {
   if (!currentPreset.value || !plan.value) return
+  if (plan.value.items.some((i) => i.action === 'takeover') && !takeover.value) {
+    app.error = '请确认接管已有外部链接'
+    return
+  }
   busy.value = true
   const ok = await app.mutate(
-    () => api.applyPreset(currentPreset.value!.id, targetIds.value, plan.value!.revision),
+    () =>
+      api.applyPreset(
+        currentPreset.value!.id,
+        targetIds.value,
+        plan.value!.revision,
+        takeover.value,
+      ),
     `预设「${currentPreset.value.name}」已应用到 ${targetIds.value.length} 个目标`,
   )
   busy.value = false
@@ -124,6 +178,7 @@ async function exportPreset() {
   }
 }
 function openApply() {
+  takeover.value = false
   targetIds.value = []
   plan.value = null
   applyOpen.value = true
@@ -161,7 +216,7 @@ function applyFromCard(preset: Preset) {
       ><Button variant="primary" @click="create"><Plus />新建预设</Button></EmptyState
     >
     <section v-else class="preset-list" aria-label="预设列表">
-      <article v-for="preset in app.snapshot?.presets" :key="preset.id" class="preset-row">
+      <article v-for="preset in pagedPresets" :key="preset.id" class="preset-row">
         <div class="item-icon"><Layers3 /></div>
         <div class="preset-main">
           <h3>
@@ -186,6 +241,18 @@ function applyFromCard(preset: Preset) {
           ><Button size="sm" @click="applyFromCard(preset)"><Link2 />整体分发</Button>
         </div>
       </article>
+      <AppPagination
+        v-if="allPresets.length"
+        v-model:page="presetsPage"
+        v-model:page-size="presetsPageSize"
+        :total="allPresets.length"
+        style="
+          grid-column: 1 / -1;
+          margin-top: 8px;
+          border-radius: 8px;
+          border: 1px solid var(--line);
+        "
+      />
     </section>
     <PresetEditorDialog v-model:open="editorOpen" :preset="editing" />
     <AppSheet
@@ -209,28 +276,69 @@ function applyFromCard(preset: Preset) {
         <div class="detail-row">
           <dt>应用目标</dt>
           <dd>
-            {{ appliedTargetIds.length }} 个；编辑成员后已应用目标仍使用原有分发版本，需主动更新。
+            {{ appliedTargetIds.length }} 个；包同步会推进跟随更新的目标，固定目标保留当前版本。
           </dd>
         </div>
       </dl>
+      <div
+        v-if="
+          currentPreset?.skillIds.some(
+            (id) =>
+              currentPreset?.locks[id]?.externalPath ||
+              app.snapshot?.skills.find((skill) => skill.id === id)?.externalPath,
+          )
+        "
+        class="callout"
+        style="margin-top: 12px"
+      >
+        包含本地引用：跟随原目录内容，保存修订不会锁定这些成员的文件；不支持导出为便携快照包。
+      </div>
+      <section v-if="applications.length" class="list-stack" style="margin-top: 16px">
+        <h3 class="panel-title">应用与同步</h3>
+        <div v-for="application in applications" :key="application.targetId" class="choice">
+          <div class="choice-main">
+            <strong>{{
+              app.snapshot?.targets.find((t) => t.id === application.targetId)?.name
+            }}</strong>
+            <div class="choice-meta">
+              已应用 r{{ application.appliedRevision }} ·
+              {{ application.follow ? '跟随包更新' : '固定版本' }}
+            </div>
+            <p v-if="application.error" class="field-error">{{ application.error }}</p>
+          </div>
+          <Button size="sm" @click="toggleFollow(application.targetId, !application.follow)">{{
+            application.follow ? '固定版本' : '跟随更新'
+          }}</Button>
+        </div>
+        <Button size="sm" @click="retrySync">同步 / 重试目标</Button>
+      </section>
       <h3 class="panel-title" style="margin: 20px 0 10px">成员</h3>
       <div class="list-stack">
-        <div v-for="skillId in currentPreset?.skillIds" :key="skillId" class="list-row">
+        <div v-for="skillId in pagedPresetSkillIds" :key="skillId" class="list-row">
           <div class="item-icon"><PackageOpen /></div>
           <div class="list-row-main">
             <div class="list-row-title">
-              {{ app.snapshot?.skills.find((s) => s.id === skillId)?.name || skillId }}
-            </div>
-            <div class="list-row-meta">
-              v{{
-                currentPreset?.locks?.[skillId]?.version ||
-                app.snapshot?.skills.find((s) => s.id === skillId)?.version ||
-                '未知'
+              {{
+                currentPreset?.locks?.[skillId]?.name ||
+                app.snapshot?.skills.find((s) => s.id === skillId)?.name ||
+                skillId
               }}
             </div>
+            <div class="list-row-meta">
+              {{ presetMemberVersions[skillId] }}
+            </div>
+            <SkillDirectoryActions :skill-id="skillId" :preset-id="currentPreset?.id" />
           </div>
         </div>
       </div>
+      <AppPagination
+        v-if="presetSkillIds.length > 10"
+        v-model:page="presetSkillsPage"
+        v-model:page-size="presetSkillsSize"
+        :total="presetSkillIds.length"
+        compact
+        :show-size-changer="false"
+      />
       <div
         class="actions"
         style="margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line)"
@@ -248,7 +356,7 @@ function applyFromCard(preset: Preset) {
         <label v-for="target in app.snapshot?.targets" :key="target.id" class="choice"
           ><input v-model="targetIds" class="checkbox" type="checkbox" :value="target.id" />
           <div class="choice-main">
-            <div class="choice-title">{{ target.name }}</div>
+            <div class="choice-title">{{ app.targetName(target) }}</div>
             <div class="choice-meta mono">{{ target.path }}</div>
           </div></label
         >
@@ -258,18 +366,24 @@ function applyFromCard(preset: Preset) {
           <div class="list-row-main">
             <div class="list-row-title">
               {{ app.snapshot?.skills.find((s) => s.id === item.skillId)?.name }} →
-              {{ app.snapshot?.targets.find((t) => t.id === item.targetId)?.name }}
+              {{ app.targetName(app.snapshot?.targets.find((t) => t.id === item.targetId)) }}
             </div>
             <div class="list-row-meta mono">{{ item.path }}</div>
+            <SkillDirectoryActions :skill-id="item.skillId" :preset-id="currentPreset?.id" />
           </div>
           <Badge :tone="item.error ? 'red' : item.action === 'keep' ? 'neutral' : 'blue'">{{
-            item.error || item.action
+            item.error || distributionActionLabel(item.action)
           }}</Badge>
         </div>
         <div class="callout">
           执行会为每条关系添加此预设的分发记录，并保留手动或其他预设的记录。
         </div>
       </div>
+      <label v-if="plan?.items.some((i) => i.action === 'takeover')" class="choice"
+        ><input v-model="takeover" class="checkbox" type="checkbox" /><span
+          >接管已有外部链接，切换到统一库版本；取消全部引用时恢复原链接。</span
+        ></label
+      >
       <template #footer
         ><Button v-if="plan" @click="plan = null">返回</Button
         ><Button v-else @click="applyOpen = false">取消</Button
@@ -293,7 +407,7 @@ function applyFromCard(preset: Preset) {
           ><input v-model="targetIds" class="checkbox" type="checkbox" :value="targetId" />
           <div class="choice-main">
             <div class="choice-title">
-              {{ app.snapshot?.targets.find((t) => t.id === targetId)?.name }}
+              {{ app.targetName(app.snapshot?.targets.find((t) => t.id === targetId)) }}
             </div>
           </div></label
         >

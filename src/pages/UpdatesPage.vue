@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import SourceBindingDialog from '@/components/SourceBindingDialog.vue'
+import { sourceUpdateState } from '@/services/sourceUpdates'
+import SkillDirectoryActions from '@/components/SkillDirectoryActions.vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppSelect from '@/components/ui/AppSelect.vue'
 import { computed, ref, watch } from 'vue'
@@ -18,10 +21,12 @@ import Button from '@/components/ui/Button.vue'
 import Badge from '@/components/ui/Badge.vue'
 import AppSheet from '@/components/ui/AppSheet.vue'
 import AppDialog from '@/components/ui/AppDialog.vue'
+import AppPagination from '@/components/ui/AppPagination.vue'
 import { api } from '@/services/api'
 import { useAppStore } from '@/stores/app'
 import { formatDate } from '@/lib/utils'
 import type { Source } from '@/services/types'
+import { usePagination } from '@/composables/usePagination'
 
 const app = useAppStore()
 const route = useRoute()
@@ -37,6 +42,10 @@ watch(tab, (value) => {
   if (route.query.tab !== value) void router.replace({ query: { ...route.query, tab: value } })
 })
 const detail = ref<Source | null>(null)
+const bindingSource = ref<Source | null>(null)
+const bindingOpen = ref(false)
+const sourcePickerOpen = ref(false)
+const checkingAll = ref(false)
 const detailOpen = ref(false)
 const policyOpen = ref(false)
 const policyMode = ref<'off' | 'notify' | 'auto'>('notify')
@@ -54,36 +63,135 @@ const updateGroups = computed(() =>
       version: source.version.slice(0, 12),
     })),
 )
+const {
+  page: pendingPage,
+  pageSize: pendingPageSize,
+  pagedItems: pagedUpdateGroups,
+} = usePagination(updateGroups, { initialPageSize: 10 })
+
+const allSources = computed(() =>
+  (app.snapshot?.sources ?? []).map((source) => ({
+    ...source,
+    updateState: sourceUpdateState(source),
+  })),
+)
+const configuredSources = computed(() =>
+  allSources.value.filter((source) => !source.updateState.needsSetup),
+)
+const checkableSources = computed(() =>
+  allSources.value.filter((source) => source.updateState.canCheck),
+)
+const pendingSources = computed(() =>
+  allSources.value.filter((source) => source.updateState.needsSetup),
+)
+const headerAction = computed(() =>
+  checkableSources.value.length
+    ? '检查更新'
+    : pendingSources.value.length
+      ? '配置更新来源'
+      : '暂无可检查来源',
+)
+const detailState = computed(() => (detail.value ? sourceUpdateState(detail.value) : null))
+watch(
+  [() => route.query.sourceId, () => app.snapshot?.revision],
+  () => {
+    const source = app.snapshot?.sources.find((source) => source.id === route.query.sourceId)
+    if (source && sourceUpdateState(source).needsSetup) configureSource(source)
+    if (detail.value)
+      detail.value = app.snapshot?.sources.find((source) => source.id === detail.value?.id) || null
+  },
+  { immediate: true },
+)
+function configureSource(source: Source) {
+  sourcePickerOpen.value = false
+  bindingSource.value = source
+  bindingOpen.value = true
+}
+function chooseSource() {
+  if (pendingSources.value.length === 1) configureSource(pendingSources.value[0]!)
+  else if (pendingSources.value.length) sourcePickerOpen.value = true
+}
+function bindingCompleted() {
+  router.replace({ query: { ...route.query, sourceId: undefined } })
+}
+const {
+  page: sourcesPage,
+  pageSize: sourcesPageSize,
+  pagedItems: pagedSources,
+} = usePagination(configuredSources, { initialPageSize: 10 })
+
+const detailSkills = computed(() =>
+  (app.snapshot?.skills ?? []).filter((s) => s.sourceId === detail.value?.id),
+)
+const {
+  page: detailSkillsPage,
+  pageSize: detailSkillsSize,
+  pagedItems: pagedDetailSkills,
+  resetPage: resetDetailSkillsPage,
+} = usePagination(detailSkills, { initialPageSize: 10 })
+
 const sourceIcon = (kind: string) =>
-  kind === 'git' ? GitBranch : ['folder', 'local'].includes(kind) ? FolderSync : Globe2
+  kind === 'git'
+    ? GitBranch
+    : ['folder', 'local', 'local_reference'].includes(kind)
+      ? FolderSync
+      : Globe2
 const statusInfo = (status: string): [string, 'green' | 'amber' | 'red'] =>
-  ['current', 'healthy'].includes(status)
-    ? ['正常', 'green']
-    : status === 'available'
-      ? ['有更新', 'amber']
-      : status === 'detached'
-        ? ['已归集', 'amber']
-        : status === 'attention'
-          ? ['需审阅', 'amber']
-          : ['检查失败', 'red']
+  status === 'local_reference'
+    ? ['本地引用', 'green']
+    : ['current', 'healthy'].includes(status)
+      ? ['正常', 'green']
+      : status === 'available'
+        ? ['有更新', 'amber']
+        : status === 'detached'
+          ? ['待配置来源', 'amber']
+          : status === 'attention'
+            ? ['需审阅', 'amber']
+            : ['检查失败', 'red']
 async function check(source: Source, apply = false) {
+  const state = sourceUpdateState(source)
+  if (state.needsSetup) {
+    configureSource(source)
+    return
+  }
+  if (!state.canCheck || busyId.value) return
   busyId.value = source.id
-  await app.mutate(
+  const ok = await app.mutate(
     () => api.checkSource(source.id, apply),
-    apply ? `${source.name} 已更新入库` : `${source.name} 检查完成`,
+    apply ? `${app.sourceName(source)} 已更新入库` : `${app.sourceName(source)} 检查完成`,
   )
   busyId.value = ''
+  return ok
 }
 async function checkAll() {
-  for (const source of app.snapshot?.sources ?? []) {
-    if (source.status !== 'detached') await check(source, false)
+  if (checkingAll.value || busyId.value) return
+  if (!checkableSources.value.length) {
+    tab.value = 'sources'
+    chooseSource()
+    return
   }
+  checkingAll.value = true
+  const skipped = allSources.value.length - checkableSources.value.length
+  let completed = 0
+  const failed: string[] = []
+  for (const source of [...checkableSources.value]) {
+    if (await check(source, false)) completed++
+    else failed.push(`${app.sourceName(source)}：${app.error}`)
+  }
+  checkingAll.value = false
+  app.notice = `已检查 ${completed} 个来源${skipped ? `，跳过 ${skipped} 个未配置或无需检查的来源` : ''}`
+  if (failed.length) app.error = failed.join('；')
 }
 function openSource(source: Source) {
   detail.value = source
+  resetDetailSkillsPage()
   detailOpen.value = true
 }
 function editPolicy(source: Source) {
+  if (sourceUpdateState(source).needsSetup) {
+    configureSource(source)
+    return
+  }
   detail.value = source
   policyMode.value = source.policy.mode
   interval.value = source.policy.intervalHours
@@ -117,8 +225,17 @@ const intervalOptions = [
         <h1 class="page-title">更新中心</h1>
         <p class="page-subtitle">内容更新先进入中央库；只有跟随目标会同步，固定版本保持不变。</p>
       </div>
-      <Button variant="primary" @click="checkAll"><RefreshCcw />检查更新</Button>
+      <Button
+        variant="primary"
+        :disabled="checkingAll || !!busyId || (!checkableSources.length && !pendingSources.length)"
+        @click="checkAll"
+        ><RefreshCcw />{{ checkingAll ? '检查中…' : headerAction }}</Button
+      >
     </header>
+    <div v-if="pendingSources.length" class="callout" style="margin-bottom: 16px">
+      {{ pendingSources.length }} 个来源尚未配置更新地址，现有 Skill 可正常使用和分发。
+      <Button size="sm" variant="ghost" @click="chooseSource">配置更新来源</Button>
+    </div>
     <div class="segmented">
       <button class="segment" :class="{ active: tab === 'pending' }" @click="tab = 'pending'">
         待处理更新</button
@@ -132,22 +249,27 @@ const intervalOptions = [
         <Badge v-if="updateGroups.length" tone="amber">{{ updateGroups.length }} 组待处理</Badge>
       </div>
       <p v-if="!updateGroups.length" class="page-subtitle" style="padding: 20px">
-        暂未发现待处理更新。可点击“检查更新”获取来源的最新状态。
+        {{
+          checkableSources.length
+            ? '暂未发现待处理更新，可检查已配置来源。'
+            : pendingSources.length
+              ? '配置原始来源后，即可检查上游更新。'
+              : '当前没有需要检查更新的来源，本地引用直接跟随原目录。'
+        }}
       </p>
       <div class="list-stack" style="padding: 12px">
-        <div v-for="group in updateGroups" :key="group.sourceId" class="list-row">
+        <div v-for="group in pagedUpdateGroups" :key="group.sourceId" class="list-row">
           <div class="item-icon"><RefreshCcw /></div>
           <div class="list-row-main">
             <div class="list-row-title">
-              {{ app.snapshot?.sources.find((s) => s.id === group.sourceId)?.name }}
+              {{ app.sourceName(app.snapshot?.sources.find((s) => s.id === group.sourceId)) }}
             </div>
-            <div class="list-row-meta">
-              {{ group.summary }} ·
-              {{
-                group.skills
-                  .map((id) => app.snapshot?.skills.find((s) => s.id === id)?.name)
-                  .join('、')
-              }}
+            <div class="list-row-meta">{{ group.summary }}</div>
+            <div v-for="skillId in group.skills" :key="skillId" class="update-skill-member">
+              <span>{{
+                app.snapshot?.skills.find((skill) => skill.id === skillId)?.name || skillId
+              }}</span>
+              <SkillDirectoryActions :skill-id="skillId" />
             </div>
           </div>
           <div class="mono">{{ group.version }}</div>
@@ -174,6 +296,12 @@ const intervalOptions = [
           >
         </div>
       </div>
+      <AppPagination
+        v-if="updateGroups.length"
+        v-model:page="pendingPage"
+        v-model:page-size="pendingPageSize"
+        :total="updateGroups.length"
+      />
       <div class="callout" style="margin: 0 12px 12px">
         <LockKeyhole style="width: 15px; display: inline; vertical-align: -3px" />
         固定版本和预设锁定项不会跟随更新；更新后可在 Skill 详情中分别调整。
@@ -194,8 +322,13 @@ const intervalOptions = [
             </tr>
           </thead>
           <tbody>
+            <tr v-if="!configuredSources.length">
+              <td colspan="7" class="subtle" style="padding: 24px; text-align: center">
+                尚未配置更新来源，配置并保存后会显示在这里。
+              </td>
+            </tr>
             <tr
-              v-for="source in app.snapshot?.sources"
+              v-for="source in pagedSources"
               :key="source.id"
               class="clickable"
               @click="openSource(source)"
@@ -204,22 +337,26 @@ const intervalOptions = [
                 <div class="name-cell">
                   <div class="item-icon"><component :is="sourceIcon(source.kind)" /></div>
                   <div>
-                    <div class="item-name">{{ source.name }}</div>
+                    <div class="item-name">{{ app.sourceName(source) }}</div>
                     <div class="item-desc">{{ source.url || source.path }}</div>
                   </div>
                 </div>
               </td>
               <td>
                 {{
-                  source.kind === 'git'
-                    ? 'Git 仓库'
-                    : ['folder', 'local'].includes(source.kind)
-                      ? '本地文件夹'
-                      : '站点目录'
+                  source.kind === 'local_reference'
+                    ? '本地引用'
+                    : source.kind === 'git'
+                      ? 'Git 仓库'
+                      : ['folder', 'local'].includes(source.kind)
+                        ? '本地文件夹'
+                        : '站点目录'
                 }}
               </td>
               <td>{{ app.snapshot?.skills.filter((s) => s.sourceId === source.id).length }}</td>
-              <td>
+              <td v-if="source.kind === 'local_reference'">跟随本地内容</td>
+              <td v-else-if="source.updateState.needsSetup">配置来源后可设置</td>
+              <td v-else>
                 {{
                   source.policy.mode === 'off'
                     ? '已关闭'
@@ -237,29 +374,58 @@ const intervalOptions = [
               </td>
               <td @click.stop>
                 <div class="actions">
-                  <Button size="sm" :disabled="busyId === source.id" @click="check(source)"
-                    >检查</Button
-                  ><Button size="sm" @click="editPolicy(source)">设置</Button>
+                  <Button
+                    size="sm"
+                    :disabled="
+                      !!busyId ||
+                      checkingAll ||
+                      (!source.updateState.canCheck && !source.updateState.needsSetup)
+                    "
+                    @click="check(source)"
+                    >{{ source.updateState.action }}</Button
+                  ><Button
+                    size="sm"
+                    :disabled="!source.updateState.canCheck || checkingAll || !!busyId"
+                    @click="editPolicy(source)"
+                    >设置</Button
+                  >
                 </div>
               </td>
             </tr>
           </tbody>
         </table>
       </div>
+      <AppPagination
+        v-if="configuredSources.length"
+        v-model:page="sourcesPage"
+        v-model:page-size="sourcesPageSize"
+        :total="configuredSources.length"
+      />
     </section>
     <AppSheet
       v-model:open="detailOpen"
-      :title="detail?.name || '来源详情'"
+      :title="app.sourceName(detail) || '来源详情'"
       :description="detail?.url || detail?.path"
       ><div class="actions" style="margin-bottom: 16px">
         <Button
           variant="primary"
-          :disabled="detail?.status === 'detached'"
+          :disabled="
+            !!busyId || checkingAll || (!detailState?.canCheck && !detailState?.needsSetup)
+          "
           @click="detail && check(detail, false)"
-          ><RefreshCcw />检查更新</Button
-        ><Button @click="detail && editPolicy(detail)">更新设置</Button>
+          ><RefreshCcw />{{ detailState?.action }}</Button
+        ><Button :disabled="!detailState?.canCheck" @click="detail && editPolicy(detail)"
+          >更新设置</Button
+        >
       </div>
-      <div v-if="detail?.error" class="callout warning">
+      <div v-if="detail?.kind === 'local_reference'" class="callout">
+        直接使用本地包和现有运行环境，内容随原目录变化；不进行快照更新，也不自动添加新成员。
+      </div>
+      <div v-if="detailState?.needsSetup" class="callout">
+        此来源尚未配置更新地址。配置原始 Git 仓库或独立源码目录后即可检查更新，现有 Skill
+        可正常使用和分发。
+      </div>
+      <div v-else-if="detail?.error" class="callout warning">
         <AlertTriangle style="width: 15px; display: inline; vertical-align: -3px" />
         {{ detail.error }}
       </div>
@@ -270,7 +436,13 @@ const intervalOptions = [
         </div>
         <div class="detail-row">
           <dt>跟踪引用</dt>
-          <dd class="mono">{{ detail?.reference || '由站点提供' }}</dd>
+          <dd class="mono">
+            {{
+              detail?.kind === 'local_reference'
+                ? '跟随本地内容'
+                : detail?.reference || '由站点提供'
+            }}
+          </dd>
         </div>
         <div class="detail-row">
           <dt>扫描范围</dt>
@@ -278,7 +450,8 @@ const intervalOptions = [
         </div>
         <div class="detail-row">
           <dt>更新策略</dt>
-          <dd>{{ detail?.policy.mode }} · 每 {{ detail?.policy.intervalHours }} 小时</dd>
+          <dd v-if="detail?.kind === 'local_reference'">跟随本地内容，无定时任务</dd>
+          <dd v-else>{{ detail?.policy.mode }} · 每 {{ detail?.policy.intervalHours }} 小时</dd>
         </div>
         <div class="detail-row">
           <dt>下次检查</dt>
@@ -287,20 +460,45 @@ const intervalOptions = [
       </dl>
       <h3 class="panel-title" style="margin: 20px 0 10px">成员 Skill</h3>
       <div class="list-stack">
-        <div
-          v-for="skill in app.snapshot?.skills.filter((s) => s.sourceId === detail?.id)"
-          :key="skill.id"
-          class="list-row"
-        >
+        <div v-for="skill in pagedDetailSkills" :key="skill.id" class="list-row">
           <div class="list-row-main">
             <div class="list-row-title">{{ skill.name }}</div>
+            <SkillDirectoryActions :skill="skill" />
             <div class="list-row-meta">
               v{{ skill.version }} · 上游新增成员默认只进入待发现列表，不自动分发
             </div>
           </div>
         </div>
-      </div></AppSheet
+      </div>
+      <AppPagination
+        v-if="detailSkills.length > 10"
+        v-model:page="detailSkillsPage"
+        v-model:page-size="detailSkillsSize"
+        :total="detailSkills.length"
+        compact
+        :show-size-changer="false"
+    /></AppSheet>
+    <AppDialog
+      v-model:open="sourcePickerOpen"
+      title="配置更新来源"
+      description="选择需要配置的来源，核对并保存更新地址后加入来源与计划。"
     >
+      <div class="list-stack" style="max-height: 360px; overflow-y: auto">
+        <div v-for="source in pendingSources" :key="source.id" class="list-row">
+          <div class="list-row-main">
+            <div class="list-row-title">{{ app.sourceName(source) }}</div>
+            <div class="list-row-meta">{{ source.path }}</div>
+          </div>
+          <Button size="sm" @click="configureSource(source)">配置</Button>
+        </div>
+      </div>
+    </AppDialog>
+    <SourceBindingDialog
+      v-model:open="bindingOpen"
+      :source="bindingSource"
+      @completed="bindingCompleted"
+      @update:open="!$event && bindingCompleted()"
+    />
     <AppDialog
       v-model:open="policyOpen"
       title="来源更新策略"
@@ -324,3 +522,10 @@ const intervalOptions = [
     >
   </div>
 </template>
+
+<style scoped>
+.update-skill-member {
+  margin-top: 8px;
+  font-size: 13px;
+}
+</style>

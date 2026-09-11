@@ -1,3 +1,5 @@
+import { cloneAgentProfiles } from './agentProfiles'
+import { defaultCatalogSites, normalizeCatalogSites, catalogSiteKey } from './catalogSites'
 import type {
   Binding,
   CatalogResult,
@@ -189,6 +191,7 @@ const bindings: Binding[] = bindingSeed.map(([skillId, targetId, claims, follow,
     version: skill.version,
     digest: skill.bundleDigest,
     relativePath: skill.relativePath,
+    borrowed: false,
     claims,
     follow,
   }
@@ -198,6 +201,10 @@ function freshSnapshot(): Snapshot {
   return {
     initialized: true,
     schemaVersion: 1,
+    packages: [],
+    presetPackages: [],
+    presetApplications: [],
+    externalInstallations: [],
     storageRoot: '/Users/demo/SkillDock',
     revision: 7,
     skills: structuredClone(skills),
@@ -232,7 +239,9 @@ function freshSnapshot(): Snapshot {
       },
     ],
     settings: {
-      catalogSites: ['clawhub'],
+      backupRetention: 3,
+      agentProfiles: cloneAgentProfiles(),
+      catalogSites: normalizeCatalogSites(defaultCatalogSites),
       closeToTray: true,
       theme: 'light',
       updateMode: 'off',
@@ -245,7 +254,16 @@ function freshSnapshot(): Snapshot {
 let state = load()
 function load(): Snapshot {
   try {
-    return JSON.parse(localStorage.getItem(DEMO_KEY) || '') as Snapshot
+    const saved = JSON.parse(localStorage.getItem(DEMO_KEY) || '') as Snapshot
+    saved.settings.agentProfiles = cloneAgentProfiles(saved.settings.agentProfiles)
+    saved.settings.catalogSites = normalizeCatalogSites(
+      saved.settings.catalogSites || defaultCatalogSites,
+    )
+    saved.packages ??= []
+    saved.presetPackages ??= []
+    saved.presetApplications ??= []
+    saved.externalInstallations ??= []
+    return saved
   } catch {
     return freshSnapshot()
   }
@@ -273,7 +291,16 @@ export async function demoConfigure(path: string) {
   return save(state)
 }
 export async function demoDiscover(): Promise<Target[]> {
-  return structuredClone(targets)
+  const candidates = state.settings.agentProfiles.flatMap((profile) =>
+    profile.userPaths.map((path) => ({
+      id: `discovered-${profile.id}-${path}`,
+      name: profile.name,
+      tool: profile.id,
+      scope: 'user',
+      path: path.replace('~/', '/Users/demo/'),
+    })),
+  )
+  return candidates
 }
 export async function demoScan(path: string): Promise<ScanResult> {
   return {
@@ -302,11 +329,19 @@ export async function demoScan(path: string): Promise<ScanResult> {
         error: '中央库已存在同名 Skill',
       },
       {
+        path: `${path}/git-workflow`,
+        name: 'Git Workflow',
+        description: '指向：~/.local/share/skilldock/skills/git-workflow',
+        status: 'linked',
+        error:
+          '外部已有软链（指向 ~/.local/share/skilldock/skills/git-workflow）。SkillDock 完整保留原样，不自动接管；如需归集请选择原始实体目录。',
+      },
+      {
         path: `${path}/legacy-link`,
         name: 'Legacy Link',
-        description: '现有软链目标已丢失',
+        description: '指向：~/.local/share/old-skills/legacy（已丢失）',
         status: 'broken',
-        error: '链接目标不存在',
+        error: '软链目标不存在（指向 ~/.local/share/old-skills/legacy），链接已失效。',
       },
       {
         path: `${path}/builtin`,
@@ -399,6 +434,7 @@ export async function demoDistribute(
         version: skill.version,
         digest: skill.bundleDigest,
         relativePath: skill.relativePath,
+        borrowed: false,
         claims: [claim],
         follow: true,
       })
@@ -514,7 +550,7 @@ export async function demoSearchCatalog(query: string, sites: string[]): Promise
     items: all.filter(
       (item) =>
         (!normalized || `${item.name} ${item.description}`.toLowerCase().includes(normalized)) &&
-        (!sites.length || sites.includes(item.site)),
+        (!sites.length || sites.some((site) => catalogSiteKey(site) === catalogSiteKey(item.site))),
     ),
     errors: sites.includes('https://skills.example.dev')
       ? ['团队兼容站：临时限流，仅展示缓存结果']
@@ -636,5 +672,19 @@ export async function demoCheckAppUpdate() {
     available: true,
     version: '0.2.0',
     message: '新版本已就绪，可在空闲时安装',
+  }
+}
+
+export async function demoScanMany(paths: string[]): Promise<ScanResult> {
+  const results = await Promise.all(
+    [...new Set(paths.map((path) => path.replace(/\/+$/, '')))].map(demoScan),
+  )
+  const items = results.flatMap((result) => result.items)
+  return {
+    root: '',
+    items: items.filter(
+      (item, index) => items.findIndex((other) => other.path === item.path) === index,
+    ),
+    warnings: results.flatMap((result) => result.warnings),
   }
 }

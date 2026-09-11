@@ -1,9 +1,14 @@
+mod backups;
 pub mod error;
 pub mod files;
+mod local_presets;
 pub mod model;
 pub mod network;
+mod object_cleanup;
 mod operations;
+mod packages;
 mod portable;
+mod source_binding;
 
 use error::{Result, fail};
 use files::Change;
@@ -31,6 +36,10 @@ struct Journal {
     before: Snapshot,
     after: Snapshot,
     error: String,
+    #[serde(default)]
+    pruning: Option<Vec<backups::BackupRemoval>>,
+    #[serde(default)]
+    object_cleanup: Option<object_cleanup::ObjectCleanup>,
 }
 pub fn now() -> String {
     chrono::Utc::now().to_rfc3339()
@@ -53,16 +62,35 @@ pub(crate) fn flag(v: &Value, key: &str) -> bool {
     v.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
 pub(crate) fn skill_path(root: &Path, skill: &Skill) -> PathBuf {
+    if let Some(path) = &skill.external_path {
+        return PathBuf::from(path);
+    }
     root.join("objects")
         .join(&skill.bundle_digest)
         .join("tree")
         .join(&skill.relative_path)
 }
 pub(crate) fn binding_path(root: &Path, b: &Binding) -> PathBuf {
+    if let Some(path) = &b.external_path {
+        return PathBuf::from(path);
+    }
     root.join("objects")
         .join(&b.digest)
         .join("tree")
         .join(&b.relative_path)
+}
+
+pub(crate) fn binding_matches(root: &Path, binding: &Binding) -> bool {
+    if binding.borrowed {
+        Path::new(&binding.path)
+            .ancestors()
+            .any(|path| fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()))
+            && fs::canonicalize(&binding.path).ok().is_some_and(|path| {
+                Some(path) == fs::canonicalize(binding_path(root, binding)).ok()
+            })
+    } else {
+        fs::read_link(&binding.path).ok() == Some(binding_path(root, binding))
+    }
 }
 
 impl Engine {
@@ -106,7 +134,8 @@ impl Engine {
             ));
         };
         let mut state: Snapshot = serde_json::from_slice(&fs::read(root.join("state.json"))?)?;
-        if state.schema_version != 1 {
+        Self::observe_installations(&mut state);
+        if !matches!(state.schema_version, 1 | 2) {
             return fail("数据版本不兼容，请升级 SkillDock");
         }
         if state.storage_root != root.display().to_string() {
@@ -136,6 +165,22 @@ impl Engine {
                 }
             }
         }
+        state
+            .settings
+            .agent_profiles
+            .retain(|profile| !profile.id.eq_ignore_ascii_case("qclaw"));
+        for target in &mut state.targets {
+            if target.tool == "custom" && target.name.eq_ignore_ascii_case("skills") {
+                let inferred = operations::inferred_target(
+                    Path::new(&target.path),
+                    &state.settings.agent_profiles,
+                );
+                target.name = inferred.name;
+                target.tool = inferred.tool;
+                target.scope = inferred.scope;
+            }
+        }
+        self.decorate_object_cleanups(&root, &mut state)?;
         self.decorate_migration(&mut state)?;
         Ok(state)
     }
@@ -179,32 +224,67 @@ impl Engine {
         Ok(())
     }
     pub fn discover() -> Result<Vec<Target>> {
-        let h = files::home()?;
-        Ok([
-            ("通用 Agent Skills", "agents", ".agents/skills"),
-            ("Codex", "codex", ".codex/skills"),
-            ("Claude Code", "claude", ".claude/skills"),
-            ("Cursor", "cursor", ".cursor/skills"),
-            ("OpenCode", "opencode", ".config/opencode/skills"),
-            ("Gemini CLI", "gemini", ".gemini/skills"),
-            ("OpenClaw", "openclaw", ".openclaw/skills"),
-        ]
-        .into_iter()
-        .map(|(name, tool, path)| Target {
-            id: format!("discovered-{path}"),
-            name: name.into(),
-            tool: tool.into(),
-            scope: "user".into(),
-            path: h.join(path).display().to_string(),
-        })
-        .filter(|t| Path::new(&t.path).is_dir())
-        .collect())
+        Self::discover_profiles(&default_agent_profiles())
+    }
+    fn discover_profiles(profiles: &[AgentProfile]) -> Result<Vec<Target>> {
+        let mut targets: Vec<Target> = vec![];
+        for profile in profiles {
+            if profile.id.eq_ignore_ascii_case("qclaw") {
+                continue;
+            }
+            for path in &profile.user_paths {
+                let path = files::absolute(path)?;
+                if !path.is_dir() {
+                    continue;
+                }
+                targets.push(Target {
+                    id: format!("discovered-{}-{}", profile.id, path.display()),
+                    name: profile.name.clone(),
+                    tool: profile.id.clone(),
+                    scope: "user".into(),
+                    path: path.display().to_string(),
+                });
+            }
+        }
+        Ok(targets)
+    }
+    pub fn discover_configured(&self) -> Result<Vec<Target>> {
+        let snapshot = self.snapshot()?;
+        let mut targets = Self::discover_profiles(&snapshot.settings.agent_profiles)?;
+        for target in snapshot.targets {
+            if target.tool.eq_ignore_ascii_case("qclaw") {
+                continue;
+            }
+            if Path::new(&target.path).is_dir()
+                && !targets.iter().any(|t| {
+                    t.tool == target.tool && t.scope == target.scope && t.path == target.path
+                })
+            {
+                targets.push(target);
+            }
+        }
+        Ok(targets)
     }
     pub(crate) fn transact(
         &self,
         kind: &str,
         title: &str,
         mutate: impl FnOnce(&mut Snapshot, &Path, &mut Vec<Change>) -> Result<()>,
+    ) -> Result<Snapshot> {
+        self.transact_with_cleanup(kind, title, |state, root, changes, _| {
+            mutate(state, root, changes)
+        })
+    }
+    pub(crate) fn transact_with_cleanup(
+        &self,
+        kind: &str,
+        title: &str,
+        mutate: impl FnOnce(
+            &mut Snapshot,
+            &Path,
+            &mut Vec<Change>,
+            &mut Option<object_cleanup::ObjectCleanup>,
+        ) -> Result<()>,
     ) -> Result<Snapshot> {
         let _guard = self.lock()?;
         let root = self
@@ -223,8 +303,10 @@ impl Engine {
             return fail("请先恢复未完成的文件事务");
         }
         let mut after = before.clone();
+        after.schema_version = 2;
         let mut changes = vec![];
-        mutate(&mut after, &root, &mut changes)?;
+        let mut object_cleanup = None;
+        mutate(&mut after, &root, &mut changes, &mut object_cleanup)?;
         let task_id = id();
         after.revision = before
             .revision
@@ -249,6 +331,8 @@ impl Engine {
         });
         let journal_path = root.join("transactions").join(format!("{task_id}.json"));
         let mut journal = Journal {
+            object_cleanup,
+            pruning: None,
             id: task_id.clone(),
             status: "running".into(),
             changes,
@@ -298,6 +382,37 @@ impl Engine {
         }
         journal.status = "committed".into();
         files::atomic_json(&journal_path, &journal)?;
+        if matches!(kind, "import" | "settings" | "backup_cleanup") {
+            let cleanup = self.prune_backups(&root, &after);
+            for task in after
+                .tasks
+                .iter_mut()
+                .filter(|t| t.kind == "backup_cleanup")
+            {
+                if cleanup.is_ok() {
+                    task.status = "success".into();
+                    task.message = "旧备份清理完成".into();
+                }
+            }
+            if let Err(error) = cleanup {
+                after.tasks.retain(|t| t.kind != "backup_cleanup");
+                after.tasks.push(Task {
+                    id: id(),
+                    kind: "backup_cleanup".into(),
+                    title: "部分旧备份未清理".into(),
+                    status: "failed".into(),
+                    message: error.to_string(),
+                    created_at: now(),
+                });
+            }
+            files::atomic_json(&root.join("state.json"), &after)?;
+        }
+        if journal.object_cleanup.is_some() {
+            // Forward-only cleanup: never enter the file-transaction undo branch.
+            self.run_object_cleanup(&root, &after, &mut journal)?;
+            return self.snapshot();
+        }
+        Self::observe_installations(&mut after);
         Ok(after)
     }
     pub fn recover(&self, task_id: &str) -> Result<Snapshot> {
@@ -312,10 +427,23 @@ impl Engine {
             .map_err(|_| error::Error::Message("无效任务 ID".into()))?;
         let path = root.join("transactions").join(format!("{task_id}.json"));
         let mut journal: Journal = serde_json::from_slice(&fs::read(&path)?)?;
-        if !matches!(journal.status.as_str(), "running" | "needsRecovery") {
+        let library_lock = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(root.join("manager.lock"))?;
+        fs4::FileExt::try_lock(&library_lock)
+            .map_err(|_| error::Error::Message("中央库正在使用".into()))?;
+        let mut state: Snapshot = serde_json::from_slice(&fs::read(root.join("state.json"))?)?;
+        let stale_rollback = journal.status == "rolledBack"
+            && state
+                .tasks
+                .iter()
+                .any(|t| t.id == journal.id && t.status == "needsRecovery");
+        if !matches!(journal.status.as_str(), "running" | "needsRecovery") && !stale_rollback {
             return fail("该任务不需要恢复");
         }
-        let mut state: Snapshot = serde_json::from_slice(&fs::read(root.join("state.json"))?)?;
         if state
             .tasks
             .iter()
@@ -325,35 +453,62 @@ impl Engine {
             files::atomic_json(&path, &journal)?;
             return Ok(state);
         }
-        for change in journal.changes.iter().rev() {
-            files::undo(change)?;
+        if !stale_rollback {
+            for change in journal.changes.iter().rev() {
+                files::undo(change)?;
+            }
         }
-        journal.status = "rolledBack".into();
-        files::atomic_json(&path, &journal)?;
-        state.tasks.retain(|t| t.id != journal.id);
+        state
+            .tasks
+            .retain(|t| t.id != journal.id && !(t.kind == "recovery" && t.message == journal.id));
         state.tasks.push(Task {
             id: id(),
             kind: "recovery".into(),
             title: "已恢复文件事务".into(),
             status: "success".into(),
-            message: journal.id,
+            message: journal.id.clone(),
             created_at: now(),
         });
-        state.revision += 1;
+        state.revision = state
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| error::Error::Message("版本计数已满".into()))?;
+        // Save the recovered state first. If interrupted, the still-open journal
+        // allows an idempotent retry instead of leaving an unrecoverable task.
         files::atomic_json(&root.join("state.json"), &state)?;
+        journal.status = "rolledBack".into();
+        files::atomic_json(&path, &journal)?;
         Ok(state)
     }
     pub async fn execute(&self, request: Value) -> Result<Value> {
         let action = text(&request, "action")?.to_string();
         match action.as_str() {
+            "preview_bind_source" => self.bind_source(&request, true).await,
+            "bind_source" => self.bind_source(&request, false).await,
+            "import_package" => self.import_package(&request),
+            "save_preset" if flag(&request, "syncApplied") => {
+                self.execute_local("save_preset", &request)?;
+                self.reconcile_packages()?;
+                Ok(serde_json::to_value(self.snapshot()?)?)
+            }
+            "package_migration_preview" => self.package_migration_preview(&request),
+            "retry_preset_sync" => {
+                self.reconcile_packages()?;
+                Ok(serde_json::to_value(self.snapshot()?)?)
+            }
+            "preview_preset_folder" => self.preview_preset_folder(&request),
+            "import_preset_folder" => self.import_preset_folder(&request),
             "snapshot" => Ok(serde_json::to_value(self.snapshot()?)?),
             "configure" => Ok(serde_json::to_value(
                 self.configure(text(&request, "path")?)?,
             )?),
+            "scan_many" => Ok(serde_json::to_value(files::scan_many(&strings(
+                &request, "paths",
+            )?)?)?),
             "scan" => Ok(serde_json::to_value(files::scan(&files::absolute(
                 text(&request, "path")?,
             )?)?)?),
-            "discover" => Ok(serde_json::to_value(Self::discover()?)?),
+            "discover" => Ok(serde_json::to_value(self.discover_configured()?)?),
             "skill_history" => {
                 let state = self.snapshot()?;
                 let sid = text(&request, "skillId")?;
@@ -449,6 +604,43 @@ impl Engine {
                 self.check_source(text(&request, "sourceId")?, flag(&request, "apply"))
                     .await?,
             )?),
+            "retry_backup_cleanup" => Ok(serde_json::to_value(self.transact(
+                "backup_cleanup",
+                "重试旧备份清理",
+                |_, _, _| Ok(()),
+            )?)?),
+            "list_backups" => Ok(serde_json::to_value(self.list_backups()?)?),
+            "preview_object_cleanup" => Ok(serde_json::to_value(self.preview_object_cleanup()?)?),
+            "list_object_cleanups" => Ok(serde_json::to_value(self.list_object_cleanups()?)?),
+            "cleanup_objects" => Ok(serde_json::to_value(
+                self.cleanup_objects(
+                    serde_json::from_value(
+                        request
+                            .get("expectedRevision")
+                            .cloned()
+                            .unwrap_or(Value::Null),
+                    )?,
+                    serde_json::from_value(request.get("items").cloned().unwrap_or(Value::Null))?,
+                )?,
+            )?),
+            "retry_object_cleanup" => Ok(serde_json::to_value(
+                self.retry_object_cleanup(text(&request, "taskId")?)?,
+            )?),
+            "preview_restore" => Ok(serde_json::to_value(
+                self.preview_restore(text(&request, "backupId")?)?,
+            )?),
+            "restore_backup" => Ok(serde_json::to_value(
+                self.restore_backup_cleanup(
+                    text(&request, "backupId")?,
+                    request
+                        .get("expectedRevision")
+                        .map(|value| serde_json::from_value::<u32>(value.clone()))
+                        .transpose()?,
+                    serde_json::from_value(
+                        request.get("cleanupItems").cloned().unwrap_or(json!([])),
+                    )?,
+                )?,
+            )?),
             "recover" => Ok(serde_json::to_value(
                 self.recover(text(&request, "taskId")?)?,
             )?),
@@ -480,5 +672,49 @@ pub(crate) fn prepared_info(p: &network::PreparedSource) -> Source {
         next_check: String::new(),
         status: "current".into(),
         error: String::new(),
+    }
+}
+
+#[cfg(test)]
+mod discovery_display_tests {
+    use super::*;
+
+    #[test]
+    fn shared_directory_remains_visible_under_each_profile() {
+        let temp = tempfile::tempdir().unwrap();
+        let shared = temp.path().join("shared");
+        let specific = temp.path().join("specific");
+        fs::create_dir_all(shared.join("example")).unwrap();
+        fs::create_dir_all(&specific).unwrap();
+        fs::write(shared.join("example/SKILL.md"), "# Shared skill").unwrap();
+        let shared = shared.display().to_string();
+        let profiles = vec![
+            AgentProfile {
+                id: "agents".into(),
+                name: "Shared".into(),
+                user_paths: vec![shared.clone()],
+                project_paths: vec![],
+            },
+            AgentProfile {
+                id: "codex".into(),
+                name: "Codex".into(),
+                user_paths: vec![shared, specific.display().to_string()],
+                project_paths: vec![],
+            },
+        ];
+        let targets = Engine::discover_profiles(&profiles).unwrap();
+        assert_eq!(
+            targets
+                .iter()
+                .filter(|target| target.tool == "codex")
+                .count(),
+            2
+        );
+        assert_eq!(targets.len(), 3);
+        let paths = targets
+            .into_iter()
+            .map(|target| target.path)
+            .collect::<Vec<_>>();
+        assert_eq!(files::scan_many(&paths).unwrap().items.len(), 1);
     }
 }

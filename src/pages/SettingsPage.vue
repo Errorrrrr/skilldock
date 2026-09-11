@@ -1,7 +1,11 @@
 <script setup lang="ts">
+import AgentDirectories from '@/components/AgentDirectories.vue'
+import { cloneAgentProfiles } from '@/services/agentProfiles'
 import AppSelect from '@/components/ui/AppSelect.vue'
 import { ref, watch, onMounted } from 'vue'
 import {
+  Plus,
+  Trash2,
   HardDrive,
   Globe2,
   RefreshCcw,
@@ -19,9 +23,11 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import DirectoryField from '@/components/DirectoryField.vue'
 import { useAppStore } from '@/stores/app'
 import { api } from '@/services/api'
+import { defaultCatalogSites, normalizeCatalogSites, catalogSiteKey } from '@/services/catalogSites'
+import type { CatalogSite } from '@/services/types'
 
 const app = useAppStore()
-const section = ref<'storage' | 'sites' | 'updates' | 'app' | 'general'>('storage')
+const section = ref<'storage' | 'directories' | 'sites' | 'updates' | 'app' | 'general'>('storage')
 const migrateOpen = ref(false)
 const migrateConfirm = ref(false)
 const newPath = ref('')
@@ -32,7 +38,9 @@ const appUpdate = ref<{
   version?: string
   message: string
 } | null>(null)
-const catalogSites = ref('clawhub\nskillhub\nskills.sh')
+const catalogSites = ref<CatalogSite[]>(normalizeCatalogSites(defaultCatalogSites))
+const siteError = ref('')
+const agentProfiles = ref(cloneAgentProfiles())
 const autoStart = ref(false)
 const restartConfirm = ref(false)
 const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -43,9 +51,14 @@ const endpoint = ref('')
 const publicKey = ref('')
 watch(
   () => app.snapshot?.settings,
-  (s) => {
+  (s, previous) => {
     if (!s) return
-    catalogSites.value = (s.catalogSites || ['clawhub', 'skillhub', 'skills.sh']).join('\n')
+    // Polling must not overwrite a website row while it is being edited.
+    if (JSON.stringify(s.catalogSites) !== JSON.stringify(previous?.catalogSites)) {
+      catalogSites.value = normalizeCatalogSites(s.catalogSites || defaultCatalogSites)
+    }
+    if (JSON.stringify(s.agentProfiles) !== JSON.stringify(previous?.agentProfiles))
+      agentProfiles.value = cloneAgentProfiles(s.agentProfiles)
     closeToTray.value = s.closeToTray
     theme.value = s.theme
     updateMode.value = s.updateMode
@@ -79,13 +92,57 @@ async function toggleAutoStart() {
   }
 }
 async function saveSettings() {
+  siteError.value = ''
+  for (const profile of agentProfiles.value) {
+    for (const paths of [profile.userPaths, profile.projectPaths]) {
+      const normalized = paths.map((path) => path.trim().replace(/[\\/]+$/, ''))
+      if (normalized.some((path) => !path) || new Set(normalized).size !== normalized.length) {
+        app.error = `${profile.name} 的目录不能为空或重复`
+        section.value = 'directories'
+        return
+      }
+    }
+  }
+  const sites = catalogSites.value.map((site) => ({ name: site.name.trim(), url: site.url.trim() }))
+  const urls = new Set<string>()
+  for (const [index, site] of sites.entries()) {
+    if (!site.name || site.name.length > 100) {
+      siteError.value = `第 ${index + 1} 个网站请填写名称（最多 100 个字符）`
+      break
+    }
+    try {
+      const url = new URL(site.url)
+      if (
+        url.protocol !== 'https:' ||
+        !url.hostname ||
+        url.username ||
+        url.password ||
+        url.search ||
+        url.hash
+      )
+        throw new Error()
+      site.url = url.href.replace(/\/+$/, '')
+      const key = catalogSiteKey(site.url)
+      if (urls.has(key)) {
+        siteError.value = `第 ${index + 1} 个网站的网址已存在`
+        break
+      }
+      urls.add(key)
+    } catch {
+      siteError.value = `第 ${index + 1} 个网站请填写完整的 HTTPS 网址，不含凭据、查询参数或片段`
+      break
+    }
+  }
+  if (!sites.length || sites.length > 8) siteError.value = '请配置 1 至 8 个网站'
+  if (siteError.value) {
+    section.value = 'sites'
+    return
+  }
   await app.mutate(
     () =>
       api.settings({
-        catalogSites: catalogSites.value
-          .split('\n')
-          .map((s) => s.trim())
-          .filter(Boolean),
+        catalogSites: sites,
+        agentProfiles: cloneAgentProfiles(agentProfiles.value),
         closeToTray: closeToTray.value,
         theme: theme.value,
         updateMode: updateMode.value,
@@ -156,6 +213,8 @@ const themeOptions = [
         <button :class="{ active: section === 'storage' }" @click="section = 'storage'">存储</button
         ><button :class="{ active: section === 'sites' }" @click="section = 'sites'">
           网站来源</button
+        ><button :class="{ active: section === 'directories' }" @click="section = 'directories'">
+          工具目录</button
         ><button :class="{ active: section === 'updates' }" @click="section = 'updates'">
           Skill 更新</button
         ><button :class="{ active: section === 'app' }" @click="section = 'app'">应用更新</button
@@ -164,7 +223,8 @@ const themeOptions = [
         </button>
       </nav>
       <section class="panel settings-section">
-        <template v-if="section === 'storage'"
+        <AgentDirectories v-if="section === 'directories'" v-model="agentProfiles" />
+        <template v-else-if="section === 'storage'"
           ><div class="panel-header" style="padding: 0 0 13px">
             <h3 class="panel-title">
               <HardDrive style="width: 16px; display: inline; vertical-align: -3px" /> 统一存储
@@ -187,21 +247,56 @@ const themeOptions = [
             </div>
           </div>
           <div class="callout">
-            修改目录会进入迁移预览。迁移会复制并校验内容，再更新已分发的软链。旧库保留供核验。
+            修改目录会进入迁移预览。迁移会复制并校验内容，再更新已分发的软链。迁移成功后自动清理旧目录。
           </div></template
         >
         <template v-else-if="section === 'sites'"
           ><h3 class="panel-title">网站来源</h3>
-          <p class="page-subtitle">配置可搜索的 Skill 目录，一行一个站点，最多 8 个。</p>
-          <label class="field" style="margin-top: 20px"
-            ><span class="field-label">搜索站点</span
-            ><textarea
-              v-model="catalogSites"
-              class="textarea"
-              rows="6"
-              placeholder="clawhub&#10;https://your-catalog.example"
-            />
-          </label>
+          <p class="page-subtitle">
+            为每个网站填写名称和网址，最多添加 8 个。名称将显示在搜索页面。
+          </p>
+          <div class="catalog-sites-editor">
+            <div v-for="(site, index) in catalogSites" :key="index" class="catalog-site-row">
+              <label class="field">
+                <span class="field-label">网站名称</span>
+                <input
+                  v-model="site.name"
+                  class="input"
+                  :aria-label="`网站 ${index + 1} 名称`"
+                  maxlength="100"
+                  placeholder="例如：团队 Skills"
+                />
+              </label>
+              <label class="field">
+                <span class="field-label">网址</span>
+                <input
+                  v-model="site.url"
+                  class="input"
+                  type="url"
+                  :aria-label="`网站 ${index + 1} 网址`"
+                  placeholder="https://example.com"
+                  spellcheck="false"
+                />
+              </label>
+              <Button
+                variant="ghost"
+                size="icon"
+                :disabled="catalogSites.length <= 1"
+                :aria-label="`删除网站 ${index + 1}`"
+                @click="catalogSites.splice(index, 1)"
+              >
+                <Trash2 :size="16" />
+              </Button>
+            </div>
+            <p v-if="siteError" class="catalog-site-error" role="alert">{{ siteError }}</p>
+            <Button
+              variant="secondary"
+              :disabled="catalogSites.length >= 8"
+              @click="catalogSites.push({ name: '', url: '' })"
+            >
+              <Plus :size="16" /> 添加网站
+            </Button>
+          </div>
           <div class="callout" style="margin-top: 14px">
             内置 ClawHub、SkillHub 和 Skills.sh。自定义站点需兼容 ClawHub HTTP API，也可通过公开 Git
             仓库导入。
@@ -366,7 +461,7 @@ const themeOptions = [
     <ConfirmDialog
       v-model:open="migrateConfirm"
       title="确认迁移存储"
-      :description="`将中央库迁移到 ${newPath}，并更新 ${app.snapshot?.bindings.length || 0} 条软链关系。部分失败会保留可恢复任务。`"
+      :description="`将中央库迁移到 ${newPath}，并更新 ${app.snapshot?.bindings.length || 0} 条软链关系。成功后自动删除旧目录及其内容；清理失败可从任务记录重试。`"
       confirm-text="开始迁移"
       :busy="busy"
       @confirm="migrate"
@@ -380,3 +475,38 @@ const themeOptions = [
     />
   </div>
 </template>
+
+<style scoped>
+.catalog-sites-editor {
+  display: grid;
+  gap: 16px;
+  margin-top: 24px;
+  justify-items: start;
+}
+.catalog-site-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(240px, 2fr) 32px;
+  gap: 12px;
+  align-items: end;
+  width: 100%;
+}
+.catalog-site-row .field {
+  min-width: 0;
+  margin: 0;
+}
+.catalog-site-row .input {
+  width: 100%;
+}
+.catalog-site-error {
+  color: var(--danger, #dc2626);
+  font-size: 13px;
+}
+@media (max-width: 760px) {
+  .catalog-site-row {
+    grid-template-columns: minmax(0, 1fr) 32px;
+  }
+  .catalog-site-row .field:first-child {
+    grid-column: 1 / -1;
+  }
+}
+</style>

@@ -1,4 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod directories;
+#[cfg(target_os = "macos")]
+mod tray_outside;
 mod tray_popup;
 mod tray_position;
 use serde_json::{Value, json};
@@ -133,6 +136,9 @@ async fn tray_action(
             match state.engine.snapshot() {
                 Ok(snapshot) => {
                     for source in snapshot.sources {
+                        if source.status == "detached" || source.kind == "local_reference" {
+                            continue;
+                        }
                         if let Err(error) = state.engine.check_source(&source.id, false).await {
                             errors.push(format!("{}：{}", source.name, error));
                         }
@@ -162,8 +168,8 @@ async fn tray_action(
     let snapshot = state.engine.snapshot().map_err(|e| e.to_string())?;
     Ok(
         json!({"paused":state.paused.load(Ordering::SeqCst), "active":state.active.load(Ordering::SeqCst),
-        "skills":snapshot.skills.len(), "sources":snapshot.sources.len(),
-        "scheduled":snapshot.sources.iter().filter(|s| s.policy.mode == "notify" || s.policy.mode == "auto").count(),
+        "skills":snapshot.skills.iter().map(|skill| &skill.name).collect::<std::collections::BTreeSet<_>>().len(), "sources":snapshot.sources.len(),
+        "scheduled":snapshot.sources.iter().filter(|s| s.status != "detached" && s.kind != "local_reference" && (s.policy.mode == "notify" || s.policy.mode == "auto")).count(),
         "automatic":snapshot.sources.iter().filter(|s| s.policy.mode == "auto").count(),
         "theme":snapshot.settings.theme}),
     )
@@ -211,6 +217,10 @@ fn main() {
                 .shadow(false)
                 .transparent(true)
                 .build()?;
+            #[cfg(target_os = "macos")]
+            if let Err(error) = tray_outside::install(app.handle()) {
+                tracing::warn!(%error, "tray_outside_monitor_failed");
+            }
             let mut tray = TrayIconBuilder::new()
                 .tooltip("SkillDock · Skill 管理")
                 .show_menu_on_left_click(false)
@@ -315,10 +325,18 @@ fn main() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![execute, tray_action])
+        .invoke_handler(tauri::generate_handler![
+            execute,
+            tray_action,
+            directories::open_directory
+        ])
         .build(tauri::generate_context!())
         .expect("无法启动 SkillDock")
         .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Exit = event {
+                tray_outside::uninstall();
+            }
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
                 show(app);
