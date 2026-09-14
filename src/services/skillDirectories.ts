@@ -1,4 +1,4 @@
-import type { Binding, CatalogItem, Skill, Snapshot } from './types'
+import type { ExternalInstallation, Binding, CatalogItem, Skill, Snapshot } from './types'
 import { catalogSiteKey } from './catalogSites'
 import { targetDisplayName } from './agentProfiles'
 
@@ -8,6 +8,7 @@ export interface SkillDirectoryContext {
   skillId?: string
   presetId?: string
   binding?: Binding | null
+  installation?: ExternalInstallation
   path?: string
   catalog?: CatalogItem | null
 }
@@ -25,6 +26,17 @@ function joinDirectory(base: string, ...parts: string[]): string {
 // Used in every Skill view so locked versions and nested local paths have the
 // same meaning in lists, selectors, plans and details.
 export function skillDirectories(snapshot: Snapshot | null, context: SkillDirectoryContext) {
+  if (context.installation) {
+    const { path, entityPath } = context.installation
+    return {
+      directory: path,
+      original: entityPath,
+      directories: [{ path, label: path }],
+      directoryReason: '',
+      originalReason: '',
+    }
+  }
+
   if (context.path)
     return {
       directory: context.path,

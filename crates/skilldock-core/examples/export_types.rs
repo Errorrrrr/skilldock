@@ -11,6 +11,7 @@ fn main() {
         Task::decl(),
         CatalogSite::decl(),
         AgentProfile::decl(),
+        NetworkProxy::decl(),
         Settings::decl(),
         PackageScope::decl(),
         SkillPackage::decl(),
@@ -22,6 +23,7 @@ fn main() {
         ScanResult::decl(),
         CatalogItem::decl(),
         CatalogResult::decl(),
+        PlanReplacement::decl(),
         PlanItem::decl(),
         DistributionPlan::decl(),
     ];

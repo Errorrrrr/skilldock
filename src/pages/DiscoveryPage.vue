@@ -188,8 +188,9 @@ onMounted(() => {
         <p class="page-subtitle">搜索已配置的网站，也可以从 Git 仓库或本地文件夹安装。</p>
       </div>
       <div class="actions">
+        <Button @click="$router.push('/local-sources')">本地来源</Button>
         <Button @click="gitOpen = true"><GitBranch />Git 仓库</Button
-        ><Button @click="folderOpen = true"><FolderInput />本地文件夹</Button>
+        ><Button @click="folderOpen = true"><FolderInput />复制文件夹入库</Button>
       </div>
     </header>
     <section class="panel">
@@ -369,8 +370,8 @@ onMounted(() => {
     >
     <AppDialog
       v-model:open="folderOpen"
-      title="从本地文件夹导入"
-      description="扫描并选择内容；原文件夹保持不变。"
+      title="复制文件夹入库"
+      description="将内容复制到统一库，原文件夹保留；直接使用原目录请添加本地来源。"
       ><label class="field"
         ><span class="field-label">文件夹</span><DirectoryField v-model="folder"
       /></label>

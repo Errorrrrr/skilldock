@@ -9,11 +9,19 @@ impl Engine {
             .iter()
             .find(|s| s.id == source_id)
             .ok_or_else(|| error::Error::Message("来源不存在".into()))?;
+        if source.updates_removed == Some(true) {
+            return fail("此来源已移除更新管理");
+        }
         if source.kind == "local_reference" {
             return fail("本地引用直接跟随原目录，无需配置更新来源");
         }
         if source.status != "detached" {
             return fail("此来源已配置，请刷新后检查更新");
+        }
+        if source.kind == "local" {
+            return fail(
+                "归集记录不是统一更新来源，不能为整个安装目录绑定仓库；请从实际 Git 仓库或源码包导入并核对成员",
+            );
         }
         let members: Vec<_> = baseline
             .skills

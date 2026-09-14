@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { sourceUpdateState } from '@/services/sourceUpdates'
 import { computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
@@ -22,8 +23,10 @@ const router = useRouter()
 const libraryCount = computed(() => librarySkillCount(app.snapshot))
 const updateCount = computed(
   () =>
-    app.snapshot?.sources.filter((source) => ['available', 'attention'].includes(source.status))
-      .length || 0,
+    app.snapshot?.sources.filter(
+      (source) =>
+        sourceUpdateState(source).canCheck && ['available', 'attention'].includes(source.status),
+    ).length || 0,
 )
 const groups = computed(() => [
   {
@@ -31,6 +34,7 @@ const groups = computed(() => [
     items: [
       { to: '/library', label: 'Skill 库', icon: Archive, count: libraryCount.value },
       { to: '/discover', label: '发现与安装', icon: Compass },
+      { to: '/local-sources', label: '本地来源', icon: FolderSearch },
       { to: '/presets', label: '预设', icon: Layers3, count: app.snapshot?.presets.length },
     ],
   },

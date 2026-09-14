@@ -181,74 +181,78 @@ async function restore(includeCleanup = true) {
         >
       </div>
     </div>
-    <p class="muted">
-      默认 3
-      批次，按归集操作计数。时间分组仅用于展示。保存后及归集完成后自动清理超额备份；异常备份保留并记录原因。统一库副本不受此设置影响。
-    </p>
-    <Button
-      v-if="
-        backups.some((backup) => backup.status === 'pruning') ||
-        app.snapshot?.tasks.some(
-          (task) => task.kind === 'backup_cleanup' && task.status === 'failed',
-        )
-      "
-      :disabled="app.loading"
-      @click="app.mutate(() => api.retryBackupCleanup(), '已重新检查旧备份清理，请查看任务结果')"
-      >重试备份清理</Button
-    >
-    <div class="cleanup-heading">
-      <Button :disabled="busy || app.loading" @click="openRestore()">清理统一库残留</Button>
-      <span class="muted">先查看清单，再确认永久清理；有引用或修改的内容保留。</span>
-    </div>
-    <div v-if="cleanupReports.length" class="cleanup-reports">
-      <details v-for="report in cleanupReports" :key="report.id" class="cleanup-report">
-        <summary>
-          实体清理 · {{ report.status === 'complete' ? '检查完成' : '有项目待重试' }} ·
-          {{ report.items.length }} 项
-        </summary>
-        <div v-for="item in report.items" :key="item.digest" class="cleanup-item">
-          <Badge :tone="item.status === 'failed' ? 'amber' : 'neutral'">{{
-            cleanupLabels[item.status]
-          }}</Badge>
-          <div class="mono backup-path">{{ item.path }}</div>
-          <p class="muted">{{ item.reason }}</p>
-        </div>
-        <Button
-          v-if="report.status === 'pending'"
-          size="sm"
-          :disabled="busy || app.loading"
-          @click="retryCleanup(report.id)"
-          >重试实体清理</Button
-        >
-      </details>
-    </div>
-    <p v-if="!isNative" class="muted">网页演示不读取本机备份，请在桌面应用中查看和恢复。</p>
-    <p v-if="error" role="alert">{{ error }}</p>
-    <div class="backup-list">
-      <p v-if="!backups.length" class="muted">暂无归集备份</p>
-      <details v-for="group in backupGroups" :key="group.key" class="backup-group">
-        <summary class="backup-group-heading">
-          <ArchiveRestore :size="19" />
-          <strong>{{ group.time }}</strong>
-          <span class="muted"
-            >{{ group.entries.length }} 条备份 · {{ group.directoryCount }} 个原目录</span
-          >
-          <span class="muted backup-expand">展开 / 收起</span>
-        </summary>
-        <article v-for="backup in group.entries" :key="backup.id" class="backup-row">
-          <div class="backup-main">
-            <div v-for="path in backup.paths" :key="path" class="mono backup-path">{{ path }}</div>
-            <p v-for="issue in backup.issues" :key="issue" class="backup-path">{{ issue }}</p>
+    <div class="backup-data-scroll">
+      <p class="muted">
+        默认 3
+        批次，按归集操作计数。时间分组仅用于展示。保存后及归集完成后自动清理超额备份；异常备份保留并记录原因。统一库副本不受此设置影响。
+      </p>
+      <Button
+        v-if="
+          backups.some((backup) => backup.status === 'pruning') ||
+          app.snapshot?.tasks.some(
+            (task) => task.kind === 'backup_cleanup' && task.status === 'failed',
+          )
+        "
+        :disabled="app.loading"
+        @click="app.mutate(() => api.retryBackupCleanup(), '已重新检查旧备份清理，请查看任务结果')"
+        >重试备份清理</Button
+      >
+      <div class="cleanup-heading">
+        <Button :disabled="busy || app.loading" @click="openRestore()">清理统一库残留</Button>
+        <span class="muted">先查看清单，再确认永久清理；有引用或修改的内容保留。</span>
+      </div>
+      <div v-if="cleanupReports.length" class="cleanup-reports">
+        <details v-for="report in cleanupReports" :key="report.id" class="cleanup-report">
+          <summary>
+            实体清理 · {{ report.status === 'complete' ? '检查完成' : '有项目待重试' }} ·
+            {{ report.items.length }} 项
+          </summary>
+          <div v-for="item in report.items" :key="item.digest" class="cleanup-item">
+            <Badge :tone="item.status === 'failed' ? 'amber' : 'neutral'">{{
+              cleanupLabels[item.status]
+            }}</Badge>
+            <div class="mono backup-path">{{ item.path }}</div>
+            <p class="muted">{{ item.reason }}</p>
           </div>
-          <Badge>{{ labels[backup.status] || backup.status }}</Badge>
           <Button
+            v-if="report.status === 'pending'"
             size="sm"
-            :disabled="busy || backup.status !== 'available'"
-            @click="openRestore(backup)"
-            >恢复此备份</Button
+            :disabled="busy || app.loading"
+            @click="retryCleanup(report.id)"
+            >重试实体清理</Button
           >
-        </article>
-      </details>
+        </details>
+      </div>
+      <p v-if="!isNative" class="muted">网页演示不读取本机备份，请在桌面应用中查看和恢复。</p>
+      <p v-if="error" role="alert">{{ error }}</p>
+      <div class="backup-list">
+        <p v-if="!backups.length" class="muted">暂无归集备份</p>
+        <details v-for="group in backupGroups" :key="group.key" class="backup-group">
+          <summary class="backup-group-heading">
+            <ArchiveRestore :size="19" />
+            <strong>{{ group.time }}</strong>
+            <span class="muted"
+              >{{ group.entries.length }} 条备份 · {{ group.directoryCount }} 个原目录</span
+            >
+            <span class="muted backup-expand">展开 / 收起</span>
+          </summary>
+          <article v-for="backup in group.entries" :key="backup.id" class="backup-row">
+            <div class="backup-main">
+              <div v-for="path in backup.paths" :key="path" class="mono backup-path">
+                {{ path }}
+              </div>
+              <p v-for="issue in backup.issues" :key="issue" class="backup-path">{{ issue }}</p>
+            </div>
+            <Badge>{{ labels[backup.status] || backup.status }}</Badge>
+            <Button
+              size="sm"
+              :disabled="busy || backup.status !== 'available'"
+              @click="openRestore(backup)"
+              >恢复此备份</Button
+            >
+          </article>
+        </details>
+      </div>
     </div>
     <AppDialog
       :open="dialogOpen"

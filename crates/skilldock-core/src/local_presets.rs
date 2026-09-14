@@ -236,6 +236,8 @@ impl Engine {
                     } else {
                         let source_id = id();
                         state.sources.push(Source {
+                            updates_removed: None,
+                            local_member_ids: None,
                             id: source_id.clone(),
                             name: root
                                 .file_name()
@@ -356,6 +358,7 @@ impl Engine {
                     // Reusing every member of another registered root needs no empty source.
                     state.sources.retain(|source| {
                         source.id != source_id
+                            || source.local_member_ids.is_some()
                             || state
                                 .skills
                                 .iter()

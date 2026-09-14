@@ -28,7 +28,9 @@ const emit = defineEmits<{ 'update:open': [value: boolean] }>()
           </div>
           <DialogClose class="sheet-close" aria-label="关闭详情"><X /></DialogClose>
         </header>
+        <div v-if="$slots.toolbar" class="sheet-toolbar"><slot name="toolbar" /></div>
         <div class="sheet-body"><slot /></div>
+        <footer v-if="$slots.footer" class="sheet-footer"><slot name="footer" /></footer>
       </DialogContent>
     </DialogPortal>
   </DialogRoot>

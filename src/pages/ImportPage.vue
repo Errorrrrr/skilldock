@@ -453,7 +453,11 @@ const resolutionOptions = [
           >{{ label }}
         </div>
       </div>
-      <div class="wizard-body">
+      <div
+        v-if="(step === 2 || step === 3) && (nestedPairs.length || warnings.length)"
+        class="wizard-notice"
+        role="status"
+      >
         <section
           v-if="(step === 2 || step === 3) && nestedPairs.length"
           class="nested-warning"
@@ -495,6 +499,16 @@ const resolutionOptions = [
             </div>
           </div>
         </section>
+        <div
+          v-for="warning in warnings"
+          :key="warning"
+          class="callout warning"
+          style="margin-bottom: 10px"
+        >
+          {{ warning }}
+        </div>
+      </div>
+      <div class="wizard-body">
         <section v-if="step === 1">
           <div class="page-heading" style="margin-bottom: 14px">
             <div>
@@ -618,9 +632,17 @@ const resolutionOptions = [
               <input
                 class="checkbox"
                 type="checkbox"
-                :checked="eligibleScanItems.length > 0 && eligibleScanItems.every((i) => selectedPaths.includes(i.path))"
+                :checked="
+                  eligibleScanItems.length > 0 &&
+                  eligibleScanItems.every((i) => selectedPaths.includes(i.path))
+                "
                 @change="toggleReviewAll"
-              /><span class="choice-title">全选可归集项 ({{ selectedPaths.filter((p) => eligibleScanItems.some((i) => i.path === p)).length }} / {{ eligibleScanItems.length }})</span></label
+              /><span class="choice-title"
+                >全选可归集项 ({{
+                  selectedPaths.filter((p) => eligibleScanItems.some((i) => i.path === p)).length
+                }}
+                / {{ eligibleScanItems.length }})</span
+              ></label
             >
           </div>
 
@@ -663,20 +685,15 @@ const resolutionOptions = [
           </div>
 
           <div
-            v-for="warning in warnings"
-            :key="warning"
-            class="callout warning"
-            style="margin-bottom: 10px"
-          >
-            {{ warning }}
-          </div>
-
-          <div
             v-if="!currentScanTabItems.length"
             class="callout"
             style="margin-top: 10px; padding: 16px; text-align: center"
           >
-            {{ activeScanTab === 'eligible' ? '未发现可以归集的独立实体。' : '本次扫描未发现不可归集的条目，所有内容均可正常归集。' }}
+            {{
+              activeScanTab === 'eligible'
+                ? '未发现可以归集的独立实体。'
+                : '本次扫描未发现不可归集的条目，所有内容均可正常归集。'
+            }}
           </div>
           <div v-else class="table-wrap">
             <table class="data-table">
@@ -800,7 +817,7 @@ const resolutionOptions = [
             }}
             项跳过或由外部管理。
           </p>
-          <div class="form-grid" style="margin-top: 16px">
+          <div style="margin-top: 16px">
             <div class="list-stack">
               <div v-for="item in pagedSelectedItems" :key="item.path" class="list-row">
                 <div class="item-icon"><Link2 /></div>
@@ -830,21 +847,6 @@ const resolutionOptions = [
                 style="margin-top: 12px"
               />
             </div>
-            <div>
-              <label class="choice"
-                ><input v-model="adopt" class="checkbox" type="checkbox" />
-                <div class="choice-main">
-                  <div class="choice-title">归集后将原目录替换为软链</div>
-                  <div class="choice-meta">
-                    验证成功后将原实体目录替换为指向中央库的软链；默认关闭。
-                  </div>
-                </div></label
-              >
-              <div class="callout warning" style="margin-top: 10px">
-                <ShieldAlert style="width: 15px; display: inline; vertical-align: -3px" />
-                原实体目录会保留为相邻的隐藏备份；若归集未完成，可从任务记录恢复。
-              </div>
-            </div>
           </div>
         </section>
         <section v-else>
@@ -869,6 +871,23 @@ const resolutionOptions = [
             </div>
           </div>
         </section>
+      </div>
+      <div v-if="step === 3" class="wizard-options">
+        <div>
+          <label class="choice"
+            ><input v-model="adopt" class="checkbox" type="checkbox" />
+            <div class="choice-main">
+              <div class="choice-title">归集后将原目录替换为软链</div>
+              <div class="choice-meta">
+                验证成功后将原实体目录替换为指向中央库的软链；默认关闭。
+              </div>
+            </div></label
+          >
+          <div class="callout warning" style="margin-top: 10px">
+            <ShieldAlert style="width: 15px; display: inline; vertical-align: -3px" />
+            原实体目录会保留为相邻的隐藏备份；若归集未完成，可从任务记录恢复。
+          </div>
+        </div>
       </div>
       <footer class="wizard-footer">
         <span class="subtle">步骤 {{ step }} / 4</span>
@@ -1492,5 +1511,27 @@ const resolutionOptions = [
   .import-scan-cards {
     grid-template-columns: 1fr;
   }
+}
+</style>
+
+<style scoped>
+.wizard-options {
+  flex-shrink: 0;
+  padding: 12px 24px;
+  border-top: 1px solid var(--line);
+}
+</style>
+
+<style scoped>
+.wizard-notice {
+  flex-shrink: 0;
+  max-height: 96px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 8px 24px;
+  border-bottom: 1px solid var(--line);
+}
+.wizard-notice .nested-warning {
+  margin: 0;
 }
 </style>

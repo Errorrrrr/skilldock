@@ -438,6 +438,9 @@ impl Engine {
             .map(|source| source.id.clone())
             .collect();
         state.sources.retain(|source| {
+            if source.local_member_ids.is_some() {
+                return true;
+            }
             !added_sources.contains(&source.id)
                 || state
                     .skills
@@ -839,7 +842,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn restoring_reused_source_reenables_updates_and_preserves_policy() {
+    async fn restoring_local_source_keeps_automatic_updates_disabled() {
         let (_temp, engine, source) = setup();
         let original = source.join("existing");
         fs::create_dir_all(&original).unwrap();
@@ -851,7 +854,7 @@ mod tests {
         engine
             .execute_local(
                 "set_policy",
-                &json!({"sourceId": sid, "mode": "auto", "intervalHours": 12}),
+                &json!({"sourceId": sid, "mode": "off", "intervalHours": 12}),
             )
             .unwrap();
         engine.import_folder(&original, vec![], true, None).unwrap();
@@ -859,7 +862,7 @@ mod tests {
         engine.restore_backup(&backup.id).unwrap();
         let state = engine.check_source(&sid, false).await.unwrap();
         assert_eq!(state.sources[0].status, "current");
-        assert_eq!(state.sources[0].policy.mode, "auto");
+        assert_eq!(state.sources[0].policy.mode, "off");
         assert_eq!(state.sources[0].policy.interval_hours, 12);
     }
 

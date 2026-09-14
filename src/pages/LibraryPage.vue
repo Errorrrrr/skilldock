@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import GitPackageImport from '@/components/GitPackageImport.vue'
 import SkillDirectoryActions from '@/components/SkillDirectoryActions.vue'
 import AppSelect from '@/components/ui/AppSelect.vue'
 import { computed, ref, watch } from 'vue'
@@ -76,9 +77,6 @@ const distributeOpen = ref(false)
 const distributeIds = ref<string[]>([])
 const addOpen = ref(false)
 const addMode = ref<'menu' | 'git' | 'folder'>('menu')
-const gitUrl = ref('')
-const gitRef = ref('HEAD')
-const gitSubdir = ref('')
 const folderPath = ref(app.isNative ? '' : '/Users/demo/Downloads/skills')
 const busy = ref(false)
 const removeOpen = ref(false)
@@ -91,7 +89,9 @@ const updateSkillIds = computed(
         .filter((skill) =>
           app.snapshot?.sources.some(
             (source) =>
-              source.id === skill.sourceId && ['available', 'attention'].includes(source.status),
+              sourceUpdateState(source).canCheck &&
+              source.id === skill.sourceId &&
+              ['available', 'attention'].includes(source.status),
           ),
         )
         .map((skill) => skill.id),
@@ -140,7 +140,8 @@ const filteredSkills = computed(() =>
   }),
 )
 function openBatch(mode: 'distribute' | 'revoke') {
-  distribution.openBatch(selected.value, mode)
+  if (mode === 'distribute') openDistribute(selected.value)
+  else distribution.openBatch(selected.value, mode)
 }
 const filterCount = computed(
   () =>
@@ -246,14 +247,9 @@ function openDistribute(ids: string[]) {
   distributeIds.value = ids
   distributeOpen.value = true
 }
-async function importGit() {
-  busy.value = true
-  const ok = await app.mutate(
-    () => api.importGit(gitUrl.value, gitRef.value || 'HEAD', gitSubdir.value || undefined),
-    'Git 仓库已导入中央库',
-  )
-  busy.value = false
-  if (ok) addOpen.value = false
+function gitImported() {
+  addOpen.value = false
+  app.notice = 'Git 集合已同步'
 }
 async function importFolder() {
   busy.value = true
@@ -314,6 +310,8 @@ const rowUpdateSources = computed(() =>
       return [
         row.id,
         {
+          manualOnly:
+            sources.length > 0 && sources.every((source) => sourceUpdateState(source).manual),
           pendingId: sources.find((source) => sourceUpdateState(source).needsSetup)?.id,
           localOnly:
             sources.length > 0 &&
@@ -342,7 +340,9 @@ const updateActionLabel = computed(() =>
       ? '检查更新'
       : selectedPending.value.length
         ? '配置更新来源'
-        : '跟随本地内容',
+        : selectedSources.value.every((source) => sourceUpdateState(source).localReference)
+          ? '跟随本地内容'
+          : '暂无可检查来源',
 )
 function configureUpdateSource(sourceId?: string) {
   router.push({ path: '/updates', query: { tab: 'sources', sourceId } })
@@ -604,6 +604,13 @@ const presetIdOptions = computed(() => [
 
             <div class="library-card-dir" @click.stop>
               <SkillDirectoryActions :skill="row.original" :members="row.original.members" />
+              <Button
+                v-if="row.original.members.length > 1"
+                size="sm"
+                variant="ghost"
+                @click="openDistribute([row.original.id])"
+                >选择来源分发</Button
+              >
             </div>
 
             <footer class="library-card-footer" @click.stop>
@@ -626,7 +633,7 @@ const presetIdOptions = computed(() => [
                     <Plus v-else />
                     <span>{{ tool.name }}</span>
                     <span v-if="tool.external" class="tool-note">外部</span>
-                    <span v-else-if="tool.protected" class="tool-note">预设</span>
+                    <span v-else-if="tool.protected" class="tool-note">受管</span>
                   </button>
                 </div>
                 <Button v-else size="sm" variant="ghost" @click="router.push('/targets')">
@@ -643,6 +650,13 @@ const presetIdOptions = computed(() => [
                 >
                   配置更新来源
                 </Button>
+                <Button
+                  v-else-if="rowUpdateSources[row.original.id]?.manualOnly"
+                  size="sm"
+                  variant="ghost"
+                  @click="router.push('/presets')"
+                  >手动同步本地包</Button
+                >
                 <span
                   v-else-if="rowUpdateSources[row.original.id]?.localOnly"
                   class="subtle"
@@ -732,6 +746,13 @@ const presetIdOptions = computed(() => [
                       :title="row.original.memberSummary"
                       >已汇总 {{ row.original.members.length }} 份来源记录</span
                     >
+                    <Button
+                      v-if="row.original.members.length > 1"
+                      size="sm"
+                      variant="ghost"
+                      @click.stop="openDistribute([row.original.id])"
+                      >选择来源分发</Button
+                    >
                   </div>
                 </div>
               </td>
@@ -753,7 +774,7 @@ const presetIdOptions = computed(() => [
                     <Plus v-else />
                     <span>{{ tool.name }}</span>
                     <span v-if="tool.external" class="tool-note">外部安装</span
-                    ><span v-else-if="tool.protected" class="tool-note">预设</span>
+                    ><span v-else-if="tool.protected" class="tool-note">受管</span>
                   </button>
                 </div>
                 <Button v-else size="sm" variant="ghost" @click="router.push('/targets')"
@@ -767,6 +788,13 @@ const presetIdOptions = computed(() => [
                   variant="ghost"
                   @click="configureUpdateSource(rowUpdateSources[row.original.id]?.pendingId)"
                   >配置更新来源</Button
+                >
+                <Button
+                  v-else-if="rowUpdateSources[row.original.id]?.manualOnly"
+                  size="sm"
+                  variant="ghost"
+                  @click="router.push('/presets')"
+                  >手动同步本地包</Button
                 >
                 <span v-else-if="rowUpdateSources[row.original.id]?.localOnly" class="subtle"
                   >跟随本地内容</span
@@ -874,6 +902,7 @@ const presetIdOptions = computed(() => [
     /><DistributionDialog v-model:open="distributeOpen" :skill-ids="distributeIds" />
     <AppDialog
       v-model:open="addOpen"
+      :fixed-layout="addMode === 'git'"
       title="添加 Skill"
       description="先安装到统一库，之后可按需分发。"
       ><div v-if="addMode === 'menu'" class="choice-list">
@@ -887,7 +916,7 @@ const presetIdOptions = computed(() => [
           <div class="item-icon"><FolderInput /></div>
           <div class="choice-main" style="text-align: left">
             <div class="choice-title">从本地文件夹导入</div>
-            <div class="choice-meta">扫描并安装内容，不替换原目录</div>
+            <div class="choice-meta">复制内容到统一库；原文件夹保留</div>
           </div></button
         ><button class="choice" @click="openCatalog">
           <div class="item-icon"><Globe2 /></div>
@@ -897,22 +926,7 @@ const presetIdOptions = computed(() => [
           </div>
         </button>
       </div>
-      <div v-else-if="addMode === 'git'" class="list-stack">
-        <label class="field"
-          ><span class="field-label">仓库地址</span
-          ><input v-model="gitUrl" class="input" placeholder="https://..."
-        /></label>
-        <div class="form-grid">
-          <label class="field"
-            ><span class="field-label">引用</span
-            ><input v-model="gitRef" class="input" placeholder="main / tag / commit" /></label
-          ><label class="field"
-            ><span class="field-label">子目录（可选）</span
-            ><input v-model="gitSubdir" class="input" placeholder="skills/review"
-          /></label>
-        </div>
-        <div class="callout">仓库包含多个 Skill 时，核心会按目录识别；共享资源保持在来源包内。</div>
-      </div>
+      <GitPackageImport v-else-if="addMode === 'git'" @imported="gitImported" />
       <div v-else>
         <label class="field"
           ><span class="field-label">本地目录</span><DirectoryField v-model="folderPath"
@@ -924,8 +938,6 @@ const presetIdOptions = computed(() => [
       <template #footer
         ><Button v-if="addMode !== 'menu'" @click="addMode = 'menu'">返回</Button
         ><Button v-else @click="addOpen = false">取消</Button
-        ><Button v-if="addMode === 'git'" variant="primary" :disabled="busy" @click="importGit"
-          >导入仓库</Button
         ><Button
           v-if="addMode === 'folder'"
           variant="primary"

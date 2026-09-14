@@ -64,7 +64,7 @@ export function librarySkills(snapshot: Snapshot | null): LibrarySkill[] {
           !matches.length && external.length
             ? '外部已安装 · 使用原目录'
             : protectedByPreset
-              ? '由预设分发'
+              ? '由预设或本地来源分发'
               : active
                 ? '取消分发'
                 : '分发'
@@ -78,7 +78,7 @@ export function librarySkills(snapshot: Snapshot | null): LibrarySkill[] {
           external: !matches.length && external.length > 0,
           protected: protectedByPreset,
           actionLabel,
-          hint: `${[...new Set([...matches.map((b) => b.path), ...external.map((i) => i.path)])].join('\n') || target.path}\n${actionLabel}${retained ? '；预设引用需到预设页取消' : ''}`,
+          hint: `${[...new Set([...matches.map((b) => b.path), ...external.map((i) => i.path)])].join('\n') || target.path}\n${actionLabel}${retained ? '；请到对应预设或本地来源取消引用' : ''}`,
         }
       }),
     }

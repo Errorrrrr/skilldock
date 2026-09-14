@@ -35,6 +35,12 @@ pub struct Skill {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Source {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub local_member_ids: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub updates_removed: Option<bool>,
     pub id: String,
     pub name: String,
     pub kind: String,
@@ -49,6 +55,24 @@ pub struct Source {
     pub next_check: String,
     pub status: String,
     pub error: String,
+}
+impl Source {
+    pub fn supports_remote_updates(&self) -> bool {
+        if self.updates_removed == Some(true) || self.status == "detached" {
+            return false;
+        }
+        match self.kind.as_str() {
+            "git" => {
+                reqwest::Url::parse(&self.url).is_ok_and(|url| {
+                    matches!(url.scheme(), "https" | "ssh") && url.host_str().is_some()
+                }) || (self.url.contains('@')
+                    && self.url.contains(':')
+                    && !self.url.starts_with('/'))
+            }
+            "catalog" | "clawhub" => !self.url.is_empty() && !self.reference.is_empty(),
+            _ => false,
+        }
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -156,7 +180,24 @@ impl<'de> Deserialize<'de> for CatalogSite {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+pub struct NetworkProxy {
+    pub mode: String,
+    pub url: String,
+}
+impl Default for NetworkProxy {
+    fn default() -> Self {
+        Self {
+            mode: "system".into(),
+            url: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct Settings {
+    #[serde(default)]
+    pub network_proxy: NetworkProxy,
     #[serde(default = "default_backup_retention")]
     pub backup_retention: u32,
     #[serde(default = "default_agent_profiles")]
@@ -181,6 +222,7 @@ pub fn default_sites() -> Vec<CatalogSite> {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            network_proxy: NetworkProxy::default(),
             backup_retention: default_backup_retention(),
             catalog_sites: default_sites(),
             agent_profiles: default_agent_profiles(),
@@ -195,6 +237,9 @@ impl Default for Settings {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageScope {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub auto_add: Option<bool>,
     #[serde(default)]
     pub origin_path: String,
     pub source_id: String,
@@ -204,6 +249,8 @@ pub struct PackageScope {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillPackage {
+    #[serde(default)]
+    pub remote: bool,
     #[serde(default)]
     pub missing_member_ids: Vec<String>,
     #[serde(default)]
@@ -244,6 +291,8 @@ pub struct ExternalInstallation {
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
     #[serde(default)]
+    pub unmanaged_target_paths: Vec<String>,
+    #[serde(default)]
     pub packages: Vec<SkillPackage>,
     #[serde(default)]
     pub preset_packages: Vec<PresetPackage>,
@@ -270,6 +319,7 @@ pub fn schema_version() -> u32 {
 impl Snapshot {
     pub fn empty(root: String) -> Self {
         Self {
+            unmanaged_target_paths: Vec::new(),
             packages: vec![],
             preset_packages: vec![],
             preset_applications: vec![],
@@ -320,7 +370,24 @@ pub struct CatalogResult {
 }
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+pub struct PlanReplacement {
+    pub next_entity_path: String,
+    pub next_version: String,
+    pub binding_id: String,
+    pub skill_id: String,
+    pub entity_path: String,
+    pub version: String,
+    pub claims: Vec<String>,
+    pub blocking_claims: Vec<String>,
+    pub content_equal: Option<bool>,
+    pub restores_original: bool,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct PlanItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub replacement: Option<PlanReplacement>,
     pub skill_id: String,
     pub target_id: String,
     pub path: String,

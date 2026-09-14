@@ -121,15 +121,15 @@ const rollbackDigestOptions = computed(() =>
     :description="skill?.description"
     @update:open="emit('update:open', $event)"
   >
-    <SkillDirectoryActions :skill="skill" style="margin-bottom: 14px" />
-    <TabsRoot default-value="overview">
+    <template #toolbar><SkillDirectoryActions :skill="skill" /></template>
+    <TabsRoot default-value="overview" class="skill-detail-tabs">
       <TabsList class="tabs-list"
         ><TabsTrigger class="tab-trigger" value="overview">概览</TabsTrigger
         ><TabsTrigger class="tab-trigger" value="content">内容</TabsTrigger
         ><TabsTrigger class="tab-trigger" value="distribution">分发</TabsTrigger
         ><TabsTrigger class="tab-trigger" value="updates">更新</TabsTrigger></TabsList
       >
-      <TabsContent value="overview">
+      <TabsContent class="skill-detail-content" value="overview">
         <div class="actions" style="margin-bottom: 14px">
           <Button variant="primary" @click="skill && emit('distribute', skill.id)"
             ><Link2 />分发</Button
@@ -173,14 +173,14 @@ const rollbackDigestOptions = computed(() =>
           </div>
         </dl>
       </TabsContent>
-      <TabsContent value="content"
+      <TabsContent class="skill-detail-content" value="content"
         ><div v-if="loadingContent" class="skeleton" style="height: 240px" />
         <div v-else class="markdown" v-html="rendered" />
         <div class="callout" style="margin-top: 16px">
           内容仅以净化后的 Markdown 预览，不执行其中的脚本或指令。
         </div></TabsContent
       >
-      <TabsContent value="distribution"
+      <TabsContent class="skill-detail-content" value="distribution"
         ><div v-if="!bindings.length" class="callout">尚未分发到任何目标。</div>
         <div v-else class="list-stack">
           <div v-for="binding in pagedDistBindings" :key="binding.id" class="list-row">
@@ -220,7 +220,7 @@ const rollbackDigestOptions = computed(() =>
             style="margin-top: 12px"
           /></div
       ></TabsContent>
-      <TabsContent value="updates"
+      <TabsContent class="skill-detail-content" value="updates"
         ><div v-if="!bindings.length" class="callout">分发后可对每个目标设置跟随策略。</div>
         <div v-else class="list-stack">
           <div v-for="binding in pagedUpdatesBindings" :key="binding.id" class="list-row">

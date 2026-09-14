@@ -78,7 +78,65 @@ export interface SourceBindingInput {
   subdir: string
 }
 
+export interface GitPackagePreview {
+  issues: string[]
+  token: string
+  revision: number
+  url: string
+  reference: string
+  subdir: string
+  commit: string
+  name: string
+  items: {
+    path: string
+    name: string
+    description: string
+    existingId: string | null
+    change: string
+  }[]
+  removed: { skillId: string; name: string; path: string }[]
+}
+export interface GitPackageResult {
+  snapshot: Snapshot
+  packageId: string
+  skillIds: string[]
+  presetId: string
+}
+
 export const api = {
+  previewGitPackage: (url: string, reference: string, subdir: string): Promise<GitPackagePreview> =>
+    native('preview_git_package', { url, reference, subdir }),
+  importGitPackage: (input: {
+    token: string
+    revision: number
+    selectedPaths: string[]
+    presetId?: string
+    presetName?: string
+    autoAdd: boolean
+    removedIds?: string[]
+  }): Promise<GitPackageResult> => native('import_git_package', input),
+  saveLocalSource: (input: {
+    path: string
+    name: string
+    selectedPaths: string[]
+    revision: number
+    sourceId?: string
+  }): Promise<{ snapshot: Snapshot; sourceId: string }> =>
+    isNative
+      ? native('save_local_source', input)
+      : Promise.reject(new Error('请在桌面应用中配置本地来源')),
+  revokeLocalSource: (
+    sourceId: string,
+    targetIds: string[],
+    expectedRevision: number,
+  ): Promise<Snapshot> =>
+    isNative
+      ? native('revoke_local_source', { sourceId, targetIds, expectedRevision })
+      : Promise.reject(new Error('请在桌面应用中管理本地来源')),
+  removeLocalSource: (sourceId: string, expectedRevision: number): Promise<Snapshot> =>
+    isNative
+      ? native('remove_local_source', { sourceId, targetIds: [], expectedRevision })
+      : Promise.reject(new Error('请在桌面应用中管理本地来源')),
   importPackage: (
     path: string,
     selectedPaths: string[],
@@ -208,31 +266,75 @@ export const api = {
     isNative
       ? native('import_folder', { path, selectedPaths, adopt })
       : demo.demoImportFolder(path, selectedPaths, adopt),
+  removeUpdateSource: (sourceId: string, expectedRevision: number): Promise<Snapshot> =>
+    isNative
+      ? native('remove_update_source', { sourceId, expectedRevision })
+      : demo.demoRemoveUpdateSource(sourceId, expectedRevision),
+  removeTarget: (targetId: string, expectedRevision: number): Promise<Snapshot> =>
+    isNative
+      ? native('remove_target', { targetId, expectedRevision })
+      : demo.demoRemoveTarget(targetId, expectedRevision),
   addTarget: (input: {
     name: string
     tool: string
     scope: string
     path: string
   }): Promise<Snapshot> => (isNative ? native('add_target', input) : demo.demoAddTarget(input)),
-  plan: (skillIds: string[], targetIds: string[], claim?: string): Promise<DistributionPlan> =>
-    isNative ? native('plan', { skillIds, targetIds, claim }) : demo.demoPlan(skillIds, targetIds),
+  plan: (
+    skillIds: string[],
+    targetIds: string[],
+    claim?: string,
+    adoptExisting = false,
+    replaceBindingIds: string[] = [],
+  ): Promise<DistributionPlan> =>
+    isNative
+      ? native('plan', { skillIds, targetIds, claim, adoptExisting, replaceBindingIds })
+      : demo.demoPlan(skillIds, targetIds, adoptExisting, replaceBindingIds, claim),
   distribute: (
     skillIds: string[],
     targetIds: string[],
     expectedRevision: number,
     claim?: string,
     takeover = false,
+    adoptExisting = false,
+    replaceBindingIds: string[] = [],
   ): Promise<Snapshot> =>
     isNative
-      ? claim?.startsWith('preset:')
-        ? native('apply_preset', {
-            presetId: claim.slice(7),
+      ? claim?.startsWith('source:')
+        ? native('apply_local_source', {
+            sourceId: claim.slice(7),
             targetIds,
             expectedRevision,
             takeover,
+            adoptExisting,
+            replaceBindingIds,
           })
-        : native('distribute', { skillIds, targetIds, claim, expectedRevision, takeover })
-      : demo.demoDistribute(skillIds, targetIds, claim, expectedRevision),
+        : claim?.startsWith('preset:')
+          ? native('apply_preset', {
+              presetId: claim.slice(7),
+              targetIds,
+              expectedRevision,
+              takeover,
+              adoptExisting,
+              replaceBindingIds,
+            })
+          : native('distribute', {
+              skillIds,
+              targetIds,
+              claim,
+              expectedRevision,
+              takeover,
+              adoptExisting,
+              replaceBindingIds,
+            })
+      : demo.demoDistribute(
+          skillIds,
+          targetIds,
+          claim,
+          expectedRevision,
+          adoptExisting,
+          replaceBindingIds,
+        ),
   revoke: (bindingIds: string[], claim?: string): Promise<Snapshot> =>
     isNative ? native('revoke', { bindingIds, claim }) : demo.demoRevoke(bindingIds, claim),
   savePreset: (input: {
@@ -290,6 +392,10 @@ export const api = {
     isNative ? native('diagnose') : demo.demoDiagnose(),
   recover: (taskId: string): Promise<Snapshot> =>
     isNative ? native('recover', { taskId }) : demo.demoRecover(taskId),
+  testProxy: (networkProxy: Snapshot['settings']['networkProxy']): Promise<{ message: string }> =>
+    isNative
+      ? native('test_proxy', { networkProxy })
+      : Promise.reject(new Error('请在桌面应用中测试真实网络连接')),
   settings: (input: Partial<Snapshot['settings']>): Promise<Snapshot> =>
     isNative ? native('settings', input) : demo.demoSettings(input),
   migrateStorage: (path: string): Promise<Snapshot> =>

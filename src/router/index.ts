@@ -23,6 +23,12 @@ const router = createRouter({
       meta: { title: '发现与安装', eyebrow: '内容来源' },
     },
     {
+      path: '/local-sources',
+      name: 'local-sources',
+      component: () => import('@/pages/LocalSourcesPage.vue'),
+      meta: { title: '本地来源', eyebrow: '引用与分发' },
+    },
+    {
       path: '/presets',
       name: 'presets',
       component: () => import('@/pages/PresetsPage.vue'),

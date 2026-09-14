@@ -228,15 +228,24 @@ test('update actions distinguish detached sources, local references and configur
     status: 'detached',
     error: '',
   }
-  assert.deepEqual(sourceUpdateState(base), {
-    localReference: false,
-    needsSetup: true,
-    canCheck: false,
-    action: '配置更新来源',
-  })
+  const collected = sourceUpdateState(base)
+  assert.equal(collected.action, '未关联原始来源')
+  assert.equal(collected.needsSetup, false)
+  assert.equal(collected.canCheck, false)
   assert.equal(sourceUpdateState({ ...base, kind: 'local_reference' }).action, '跟随本地内容')
-  assert.equal(sourceUpdateState({ ...base, kind: 'git', status: 'available' }).canCheck, true)
-  assert.equal(sourceUpdateState({ ...base, status: 'temporary_failure' }).canCheck, true)
+  const local = sourceUpdateState({ ...base, status: 'temporary_failure' })
+  assert.equal(local.action, '手动同步本地文件夹')
+  assert.equal(local.canCheck, false)
+  const remote = { ...base, kind: 'git', url: 'https://example.com/skills.git' }
+  assert.equal(sourceUpdateState(remote).needsSetup, true)
+  assert.equal(sourceUpdateState(remote).canCheck, false)
+  assert.equal(sourceUpdateState({ ...remote, status: 'available' }).canCheck, true)
+  assert.equal(sourceUpdateState({ ...remote, status: 'temporary_failure' }).canCheck, true)
+  assert.equal(sourceUpdateState({ ...remote, status: 'available', url: '' }).canCheck, false)
+  assert.equal(
+    sourceUpdateState({ ...remote, status: 'available', updatesRemoved: true }).canCheck,
+    false,
+  )
 })
 
 test('directory labels identify tools for legacy names without changing targets', async () => {

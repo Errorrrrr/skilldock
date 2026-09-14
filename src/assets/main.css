@@ -2305,6 +2305,182 @@ body.tray-body #app {
   fill: #1e293b;
 }
 
-
 /* Skill directory actions sit outside selection labels. */
-.skill-choice-label { display: flex; align-items: center; gap: 10px; min-width: 0; cursor: pointer; }
+.skill-choice-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+/* Desktop frame: route content owns bounded data panes, never the window. */
+.content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+.content > :not(.page) {
+  flex-shrink: 0;
+}
+.content > .page {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  gap: 18px;
+}
+.page > * {
+  flex-shrink: 0;
+}
+.page > .panel,
+.page > .preset-list,
+.page > .settings-layout,
+.page > .onboarding {
+  flex: 1;
+  min-height: 0;
+}
+.page > .panel,
+.page > .preset-list {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.page > .panel > *,
+.page > .preset-list > * {
+  flex-shrink: 0;
+}
+.page > .panel > .list-stack,
+.page > .panel > .table-wrap,
+.page > .panel > .library-cards-container,
+.page > .panel > .wizard-body,
+.page > .panel > .backup-data-scroll,
+.preset-data-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.page > .panel > .library-cards-container {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.library-cards-container > .library-grid-header {
+  flex-shrink: 0;
+}
+.library-cards-container > .library-grid {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.table-wrap thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+}
+.settings-layout {
+  overflow: hidden;
+}
+.settings-section,
+.settings-nav,
+.page > .onboarding {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.settings-nav {
+  max-height: 100%;
+}
+.page > .backup-panel {
+  margin-bottom: 0;
+}
+.backup-data-scroll .backup-list {
+  max-height: none;
+  overflow: visible;
+}
+.dialog-content,
+.sheet-content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.dialog-header,
+.dialog-footer,
+.sheet-header {
+  flex-shrink: 0;
+}
+.dialog-body,
+.sheet-body {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.sheet-body {
+  flex: 1;
+}
+.dialog-fixed-layout .dialog-body > section {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+@media (max-width: 640px) {
+  .settings-layout {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+}
+
+.sheet-toolbar,
+.sheet-footer {
+  flex-shrink: 0;
+  padding: 14px 28px;
+  border-bottom: 1px solid var(--line);
+}
+.sheet-footer {
+  border-bottom: 0;
+  border-top: 1px solid var(--line);
+}
+.sheet-body:has(> .skill-detail-tabs) {
+  display: flex;
+  overflow: hidden;
+}
+.skill-detail-tabs {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.skill-detail-tabs > .tabs-list {
+  flex-shrink: 0;
+}
+.skill-detail-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.skill-detail-content > .actions:first-child {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  z-index: 1;
+}
+.dialog-fixed-layout .dialog-body > section:first-of-type:has(> .search-field) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.dialog-fixed-layout .dialog-body > section > .search-field {
+  flex-shrink: 0;
+}
+.dialog-fixed-layout .dialog-body > section > .choice-list {
+  flex: 1;
+  min-height: 0;
+  max-height: none !important;
+}

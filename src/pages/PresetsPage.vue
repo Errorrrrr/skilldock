@@ -216,31 +216,33 @@ function applyFromCard(preset: Preset) {
       ><Button variant="primary" @click="create"><Plus />新建预设</Button></EmptyState
     >
     <section v-else class="preset-list" aria-label="预设列表">
-      <article v-for="preset in pagedPresets" :key="preset.id" class="preset-row">
-        <div class="item-icon"><Layers3 /></div>
-        <div class="preset-main">
-          <h3>
-            <button class="item-name-button" @click="show(preset)">{{ preset.name }}</button>
-          </h3>
-          <p v-if="preset.description">{{ preset.description }}</p>
-          <div class="preset-meta">
-            <span>{{ preset.skillIds.length }} 个 Skill</span
-            ><span>{{
-              appliedCount(preset) ? `已分发到 ${appliedCount(preset)} 个目标` : '尚未分发'
-            }}</span>
+      <div class="preset-data-scroll">
+        <article v-for="preset in pagedPresets" :key="preset.id" class="preset-row">
+          <div class="item-icon"><Layers3 /></div>
+          <div class="preset-main">
+            <h3>
+              <button class="item-name-button" @click="show(preset)">{{ preset.name }}</button>
+            </h3>
+            <p v-if="preset.description">{{ preset.description }}</p>
+            <div class="preset-meta">
+              <span>{{ preset.skillIds.length }} 个 Skill</span
+              ><span>{{
+                appliedCount(preset) ? `已分发到 ${appliedCount(preset)} 个目标` : '尚未分发'
+              }}</span>
+            </div>
           </div>
-        </div>
-        <div class="preset-actions">
-          <Button
-            v-if="appliedCount(preset)"
-            size="sm"
-            variant="ghost"
-            @click="revokeFromRow(preset)"
-            ><Unlink />取消分发</Button
-          ><Button size="sm" variant="ghost" @click="show(preset)">详情</Button
-          ><Button size="sm" @click="applyFromCard(preset)"><Link2 />整体分发</Button>
-        </div>
-      </article>
+          <div class="preset-actions">
+            <Button
+              v-if="appliedCount(preset)"
+              size="sm"
+              variant="ghost"
+              @click="revokeFromRow(preset)"
+              ><Unlink />取消分发</Button
+            ><Button size="sm" variant="ghost" @click="show(preset)">详情</Button
+            ><Button size="sm" @click="applyFromCard(preset)"><Link2 />整体分发</Button>
+          </div>
+        </article>
+      </div>
       <AppPagination
         v-if="allPresets.length"
         v-model:page="presetsPage"
@@ -259,11 +261,14 @@ function applyFromCard(preset: Preset) {
       v-model:open="detailOpen"
       :title="currentPreset?.name || '预设详情'"
       :description="currentPreset?.description"
-      ><div class="actions" style="margin-bottom: 16px">
-        <Button variant="primary" @click="openApply"><Link2 />整体分发</Button
-        ><Button :disabled="!appliedTargetIds.length" @click="openRevoke"><Unlink />取消分发</Button
-        ><Button @click="currentPreset && edit(currentPreset)"><Pencil />编辑</Button>
-      </div>
+      ><template #toolbar
+        ><div class="actions">
+          <Button variant="primary" @click="openApply"><Link2 />整体分发</Button
+          ><Button :disabled="!appliedTargetIds.length" @click="openRevoke"
+            ><Unlink />取消分发</Button
+          ><Button @click="currentPreset && edit(currentPreset)"><Pencil />编辑</Button>
+        </div></template
+      >
       <dl class="detail-list">
         <div class="detail-row">
           <dt>保存修订</dt>
@@ -339,13 +344,12 @@ function applyFromCard(preset: Preset) {
         compact
         :show-size-changer="false"
       />
-      <div
-        class="actions"
-        style="margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line)"
-      >
-        <Button @click="exportPreset"><Download />导出</Button
-        ><Button variant="danger" @click="deleteOpen = true"><Trash2 />删除预设</Button>
-      </div></AppSheet
+      <template #footer
+        ><div class="actions">
+          <Button @click="exportPreset"><Download />导出</Button
+          ><Button variant="danger" @click="deleteOpen = true"><Trash2 />删除预设</Button>
+        </div></template
+      ></AppSheet
     >
     <AppDialog
       v-model:open="applyOpen"

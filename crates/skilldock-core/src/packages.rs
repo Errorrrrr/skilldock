@@ -17,6 +17,96 @@ fn git_text(path: &Path, args: &[&str]) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 impl Engine {
+    // Refresh cached legacy warnings only when both the original and stored Skill
+    // have a recognizable rebuild entrypoint. This never installs dependencies.
+    pub(crate) fn refresh_python_diagnostics(state: &mut Snapshot) {
+        let mut cleared = Vec::new();
+        for package in &mut state.packages {
+            if package.remote
+                || !package
+                    .issues
+                    .iter()
+                    .any(|issue| issue.contains("运行环境") && issue.contains(".venv"))
+            {
+                continue;
+            }
+            let environments =
+                files::local_import_exclusions(Path::new(&package.path)).unwrap_or_default();
+            let verified: Vec<_> = environments
+                .into_iter()
+                .filter(|env| {
+                    if !env.file_name().is_some_and(|n| n == ".venv") {
+                        return false;
+                    }
+                    let Some(original) = env.parent() else {
+                        return false;
+                    };
+                    if !files::rebuildable_python_skill(original) {
+                        return false;
+                    }
+                    let Ok(original) = fs::canonicalize(original) else {
+                        return false;
+                    };
+                    state
+                        .skills
+                        .iter()
+                        .filter(|skill| package.member_ids.contains(&skill.id))
+                        .any(|skill| {
+                            package
+                                .scopes
+                                .iter()
+                                .filter(|scope| {
+                                    scope.source_id == skill.source_id
+                                        && !scope.origin_path.is_empty()
+                                })
+                                .any(|scope| {
+                                    fs::canonicalize(
+                                        Path::new(&scope.origin_path).join(&skill.relative_path),
+                                    )
+                                    .ok()
+                                    .as_ref()
+                                        == Some(&original)
+                                })
+                                && files::rebuildable_python_skill(&skill_path(
+                                    Path::new(&state.storage_root),
+                                    skill,
+                                ))
+                        })
+                })
+                .map(|p| p.display().to_string())
+                .collect();
+            package.issues.retain(|issue| {
+                if issue.contains("运行环境") && verified.iter().any(|path| issue.contains(path))
+                {
+                    for scope in &package.scopes {
+                        cleared.push((scope.source_id.clone(), issue.clone()));
+                    }
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+        for source in &mut state.sources {
+            if !cleared.iter().any(|(sid, _)| sid == &source.id) {
+                continue;
+            }
+            for (_, issue) in cleared.iter().filter(|(sid, _)| sid == &source.id) {
+                source.error = source.error.replace(issue, "");
+            }
+            source.error = source
+                .error
+                .split('；')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("；");
+            if source.status == "attention" && source.error.is_empty() {
+                source.status = "current".into();
+            }
+        }
+    }
+
     // A filesystem observation never grants permission to remove an installation.
     pub(crate) fn observe_installations(state: &mut Snapshot) {
         state.external_installations.clear();
@@ -145,36 +235,101 @@ impl Engine {
         }
         let mut package_id = String::new();
         let mut ids = vec![];
-        let state = self.transact("import_package", "登记并同步 Skill 包", |s, library, changes| {
-            if request.get("revision").and_then(Value::as_u64) != Some(s.revision as u64) { return fail("资料库已变化，请重新扫描"); }
-            let mut scopes = vec![];
-            for (directory, selected) in &groups {
-                let before: BTreeSet<_> = s.sources.iter().map(|s|s.id.clone()).collect();
-                let remote = git_text(directory, &["remote", "get-url", "origin"]);
-                let reference = git_text(directory, &["symbolic-ref", "--short", "HEAD"]).or_else(||git_text(directory, &["rev-parse", "HEAD"])).unwrap_or("HEAD".into());
-                let existing = s.sources.iter().find(|src| (Path::new(&src.path)==directory && src.kind=="local") || (src.kind=="git" && remote.as_ref()==Some(&src.url) && src.reference==reference && src.scan_subdir.is_empty())).cloned();
-                let existing_id = existing.as_ref().map(|s|s.id.clone());
-                self.prepare_import(directory, selected.clone(), false, existing.filter(|s|s.kind=="git"), s, library, changes)?;
-                let source_id = existing_id.or_else(||s.sources.iter().find(|src| src.kind == "local" && Path::new(&src.path) == directory).map(|src|src.id.clone()))
-                    .or_else(||s.sources.iter().find(|src|!before.contains(&src.id)).map(|src|src.id.clone())).ok_or_else(||error::Error::Message("无法关联包来源".into()))?;
-                let prefix = root.strip_prefix(directory).unwrap_or(Path::new("")).to_string_lossy().replace('\\', "/");
-                let excluded = groups.keys().filter(|other| *other != directory && other.starts_with(directory)).map(|p|p.strip_prefix(directory).unwrap().to_string_lossy().replace('\\', "/")).collect();
-                scopes.push(PackageScope { origin_path:directory.display().to_string(), source_id: source_id.clone(), prefix, excluded });
-                if let Some(url) = git_text(directory, &["remote", "get-url", "origin"]) {
-                    let source = s.sources.iter_mut().find(|x|x.id == source_id).unwrap();
-                    source.kind = "git".into(); source.url = url;
-                    source.reference = git_text(directory, &["symbolic-ref", "--short", "HEAD"]).or_else(||git_text(directory, &["rev-parse", "HEAD"])).unwrap_or("HEAD".into());
-                    source.policy.mode = "off".into();
+        let state = self.transact(
+            "import_package",
+            "登记并同步 Skill 包",
+            |s, library, changes| {
+                if request.get("revision").and_then(Value::as_u64) != Some(s.revision as u64) {
+                    return fail("资料库已变化，请重新扫描");
                 }
-            }
-            package_id = s.packages.iter().find(|p|Path::new(&p.path)==root).map(|p|p.id.clone()).unwrap_or_else(id);
-            s.packages.retain(|p|p.id != package_id);
-            let issues = files::local_import_exclusions(&root)?.iter().filter(|p|p.file_name().is_some_and(|n|n==".venv")).map(|p|format!("运行环境 {} 未复制。请为包提供可迁移依赖后重新同步；已阻止分发和接管。",p.display())).collect();
-            s.packages.push(SkillPackage { missing_member_ids: vec![], issues, id: package_id.clone(), name: optional(request,"name",root.file_name().unwrap_or_default().to_str().unwrap_or("Skill 包")).into(), path:root.display().to_string(), scopes, member_ids:vec![] });
-            Self::refresh_package_members(s);
-            ids = Self::package_selected_ids(s, &package_id, request)?;
-            Ok(())
-        })?;
+                let mut scopes = vec![];
+                for (directory, selected) in &groups {
+                    let before: BTreeSet<_> = s.sources.iter().map(|s| s.id.clone()).collect();
+                    let existing = s
+                        .sources
+                        .iter()
+                        .find(|src| Path::new(&src.path) == directory && src.kind == "local")
+                        .cloned();
+                    let existing_id = existing.as_ref().map(|s| s.id.clone());
+                    self.prepare_import(
+                        directory,
+                        selected.clone(),
+                        false,
+                        None,
+                        s,
+                        library,
+                        changes,
+                    )?;
+                    let source_id = existing_id
+                        .or_else(|| {
+                            s.sources
+                                .iter()
+                                .find(|src| {
+                                    src.kind == "local" && Path::new(&src.path) == directory
+                                })
+                                .map(|src| src.id.clone())
+                        })
+                        .or_else(|| {
+                            s.sources
+                                .iter()
+                                .find(|src| !before.contains(&src.id))
+                                .map(|src| src.id.clone())
+                        })
+                        .ok_or_else(|| error::Error::Message("无法关联包来源".into()))?;
+                    let prefix = root
+                        .strip_prefix(directory)
+                        .unwrap_or(Path::new(""))
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    let excluded = groups
+                        .keys()
+                        .filter(|other| *other != directory && other.starts_with(directory))
+                        .map(|p| {
+                            p.strip_prefix(directory)
+                                .unwrap()
+                                .to_string_lossy()
+                                .replace('\\', "/")
+                        })
+                        .collect();
+                    scopes.push(PackageScope {
+                        auto_add: None,
+                        origin_path: directory.display().to_string(),
+                        source_id: source_id.clone(),
+                        prefix,
+                        excluded,
+                    });
+                }
+                package_id = s
+                    .packages
+                    .iter()
+                    .find(|p| Path::new(&p.path) == root)
+                    .map(|p| p.id.clone())
+                    .unwrap_or_else(id);
+                s.packages.retain(|p| p.id != package_id);
+                let issues = files::python_environment_issues(&root)?;
+                s.packages.push(SkillPackage {
+                    remote: false,
+                    missing_member_ids: vec![],
+                    issues,
+                    id: package_id.clone(),
+                    name: optional(
+                        request,
+                        "name",
+                        root.file_name()
+                            .unwrap_or_default()
+                            .to_str()
+                            .unwrap_or("Skill 包"),
+                    )
+                    .into(),
+                    path: root.display().to_string(),
+                    scopes,
+                    member_ids: vec![],
+                });
+                Self::refresh_package_members(s);
+                ids = Self::package_selected_ids(s, &package_id, request)?;
+                Ok(())
+            },
+        )?;
         Ok(json!({"snapshot":state,"packageId":package_id,"skillIds":ids}))
     }
     fn sync_registered_package(
@@ -229,15 +384,7 @@ impl Engine {
                 if files::snapshot_current_content(root, path)? != *digest {
                     return fail("来源在同步期间变化，请重新扫描");
                 }
-                for p in files::local_import_exclusions(origin)?
-                    .iter()
-                    .filter(|p| p.file_name().is_some_and(|n| n == ".venv"))
-                {
-                    issues.push(format!(
-                        "运行环境 {} 未复制，请审阅可迁移依赖。",
-                        p.display()
-                    ));
-                }
+                issues.extend(files::python_environment_issues(origin)?);
                 for member in s.skills.iter_mut().filter(|m| {
                     m.source_id == scope.source_id
                         && within(&m.relative_path, &scope.prefix)
@@ -356,12 +503,16 @@ impl Engine {
         }
         Ok(ids)
     }
-    pub(crate) fn package_contains(state: &Snapshot, source_id: &str, relative: &str) -> bool {
-        state.packages.iter().any(|p| {
-            p.scopes.iter().any(|scope| {
+    pub(crate) fn package_accepts_new(state: &Snapshot, source_id: &str, relative: &str) -> bool {
+        state.packages.iter().any(|package| {
+            package.scopes.iter().any(|scope| {
                 scope.source_id == source_id
                     && within(relative, &scope.prefix)
-                    && !scope.excluded.iter().any(|p| within(relative, p))
+                    && !scope.excluded.iter().any(|path| within(relative, path))
+                    && (scope.auto_add != Some(false)
+                        || state.preset_packages.iter().any(|subscription| {
+                            subscription.package_id == package.id && subscription.auto_add
+                        }))
             })
         })
     }
@@ -498,6 +649,8 @@ impl Engine {
                                 &[target_id.clone()],
                                 &claim,
                                 false,
+                                false,
+                                &[],
                             )?;
                         }
                         let a = s

@@ -54,14 +54,14 @@ export function useLibraryDistribution(rows: Ref<LibrarySkill[]>) {
         const borrowed = manual.filter((binding) => binding.borrowed).length
         if (!manual.length) {
           app.notice = retained
-            ? '所选分发由预设管理，请到预设页取消'
+            ? '所选分发由预设或本地来源管理，请到对应页面取消'
             : '所选工具没有需要取消的分发'
           return true
         }
         return await app.mutate(
           () => api.revoke(manual.map((binding) => binding.id)),
           `已取消 ${manual.length} 项手动分发` +
-            (retained ? `；${retained} 项仍由预设使用` : '') +
+            (retained ? `；${retained} 项仍由预设或本地来源使用` : '') +
             (borrowed ? `；${borrowed} 项原有链接保留` : ''),
         )
       }

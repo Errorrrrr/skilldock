@@ -1,3 +1,4 @@
+import { sourceUpdateState } from './sourceUpdates'
 import { cloneAgentProfiles } from './agentProfiles'
 import { defaultCatalogSites, normalizeCatalogSites, catalogSiteKey } from './catalogSites'
 import type {
@@ -42,9 +43,9 @@ const sources: Source[] = [
     scanSubdir: '',
     reference: '',
     version: 'local',
-    policy: { mode: 'auto', intervalHours: 12 },
+    policy: { mode: 'off', intervalHours: 12 },
     lastChecked: '2026-09-07T01:10:00Z',
-    nextCheck: '2026-09-07T13:10:00Z',
+    nextCheck: '',
     status: 'temporary_failure',
     error: '本地文件夹暂时离线，保留上次成功快照',
   },
@@ -238,7 +239,9 @@ function freshSnapshot(): Snapshot {
         createdAt: '2026-09-05T04:12:00Z',
       },
     ],
+    unmanagedTargetPaths: [],
     settings: {
+      networkProxy: { mode: 'system', url: '' },
       backupRetention: 3,
       agentProfiles: cloneAgentProfiles(),
       catalogSites: normalizeCatalogSites(defaultCatalogSites),
@@ -263,6 +266,19 @@ function load(): Snapshot {
     saved.presetPackages ??= []
     saved.presetApplications ??= []
     saved.externalInstallations ??= []
+    for (const source of saved.sources) {
+      if (
+        source.kind === 'git' &&
+        saved.packages.some(
+          (p) => !p.remote && p.scopes.some((scope) => scope.sourceId === source.id),
+        )
+      )
+        source.kind = 'local'
+      if (!sourceUpdateState(source).canCheck) {
+        source.policy.mode = 'off'
+        source.nextCheck = ''
+      }
+    }
     return saved
   } catch {
     return freshSnapshot()
@@ -375,34 +391,85 @@ export async function demoImportFolder(path: string, selectedPaths: string[], ad
   )
   return save(state)
 }
+export async function demoRemoveTarget(targetId: string, expectedRevision: number) {
+  if (state.revision !== expectedRevision) throw new Error('资料库已变化，请重新确认')
+  const target = state.targets.find((t) => t.id === targetId)
+  if (!target) throw new Error('目标不存在')
+  state.unmanagedTargetPaths ??= []
+  if (!state.unmanagedTargetPaths.includes(target.path))
+    state.unmanagedTargetPaths.push(target.path)
+  state.targets = state.targets.filter((t) => t.id !== targetId)
+  state.bindings = state.bindings.filter((b) => b.targetId !== targetId)
+  state.presetApplications = state.presetApplications.filter((a) => a.targetId !== targetId)
+  state.externalInstallations = state.externalInstallations.filter((i) => i.targetId !== targetId)
+  task('remove_target', '移除分发目标', '保留目录和链接')
+  return save(state)
+}
 export async function demoAddTarget(input: Omit<Target, 'id'>) {
   state.targets.push({ id: id('target'), ...input })
   task('target', '添加分发目标', input.name)
   return save(state)
 }
-export async function demoPlan(skillIds: string[], targetIds: string[]): Promise<DistributionPlan> {
+export async function demoPlan(
+  skillIds: string[],
+  targetIds: string[],
+  adoptExisting = false,
+  replaceBindingIds: string[] = [],
+  claim = 'manual',
+): Promise<DistributionPlan> {
   return {
     revision: state.revision,
     items: skillIds.flatMap((skillId) =>
       targetIds.map((targetId) => {
         const skill = findSkill(skillId)
-        const target = state.targets.find((item) => item.id === targetId)
-        const conflict = state.bindings.some(
-          (item) =>
-            item.targetId === targetId &&
-            item.path.endsWith(`/${skillId}`) &&
-            item.skillId !== skillId,
-        )
+        const target = state.targets.find((t) => t.id === targetId)
+        const binding =
+          state.bindings.find((b) => b.targetId === targetId && b.skillId === skillId) ||
+          state.bindings.find(
+            (b) =>
+              b.targetId === targetId &&
+              findSkill(b.skillId)?.name.toLowerCase() === skill?.name.toLowerCase(),
+          )
+        const path = binding?.path || `${target?.path}/${skillId}`
+        const incomingPath =
+          skill?.externalPath ||
+          `${state.storageRoot}/objects/${skill?.bundleDigest}/tree/${skill?.relativePath}`
+        if (binding && binding.skillId !== skillId) {
+          const blockingClaims = binding.claims.filter((c) => c !== 'manual' && c !== claim)
+          const confirmed = replaceBindingIds.includes(binding.id)
+          return {
+            skillId,
+            targetId,
+            path,
+            action: confirmed && !blockingClaims.length ? 'replace' : 'conflict',
+            error: blockingClaims.length
+              ? '旧来源仍被其他预设或本地来源引用，请先解除这些引用'
+              : confirmed
+                ? ''
+                : '目标已使用其他来源，请确认切换来源',
+            replacement: {
+              bindingId: binding.id,
+              skillId: binding.skillId,
+              version: binding.version,
+              nextVersion: skill!.version,
+              nextEntityPath: incomingPath,
+              entityPath:
+                binding.externalPath ||
+                `${state.storageRoot}/objects/${binding.digest}/tree/${binding.relativePath}`,
+              claims: binding.claims,
+              blockingClaims,
+              contentEqual: null,
+              restoresOriginal: binding.borrowed || !!binding.originalLink,
+            },
+          }
+        }
+        const borrowed = binding?.borrowed && skill?.externalPath
         return {
           skillId,
           targetId,
-          path: `${target?.path}/${skillId}`,
-          action: state.bindings.some(
-            (item) => item.skillId === skillId && item.targetId === targetId,
-          )
-            ? 'keep'
-            : 'link',
-          error: conflict ? '目标位置存在同名内容' : !skill || !target ? '对象不存在' : '',
+          path,
+          action: borrowed ? (adoptExisting ? 'adopt' : 'borrow') : binding ? 'keep' : 'create',
+          error: !skill || !target ? '对象不存在' : '',
         }
       }),
     ),
@@ -413,14 +480,37 @@ export async function demoDistribute(
   targetIds: string[],
   claim = 'manual',
   expectedRevision: number,
+  adoptExisting = false,
+  replaceBindingIds: string[] = [],
 ) {
   if (expectedRevision !== state.revision) throw new Error('分发计划已过期，请重新预览')
+  const plan = await demoPlan(skillIds, targetIds, adoptExisting, replaceBindingIds, claim)
+  const errors = plan.items.filter((item) => item.error)
+  if (errors.length) throw new Error(errors.map((item) => item.error).join('；'))
+  for (const item of plan.items.filter((item) => item.action === 'replace')) {
+    const binding = state.bindings.find((b) => b.id === item.replacement?.bindingId)!
+    const skill = findSkill(item.skillId)!
+    if (binding.borrowed) binding.originalLink = item.replacement!.entityPath
+    Object.assign(binding, {
+      skillId: skill.id,
+      version: skill.version,
+      digest: skill.bundleDigest,
+      relativePath: skill.relativePath,
+      externalPath: skill.externalPath,
+      borrowed: false,
+      follow: false,
+    })
+  }
   for (const skillId of skillIds)
     for (const targetId of targetIds) {
       const existing = state.bindings.find(
         (item) => item.skillId === skillId && item.targetId === targetId,
       )
       if (existing) {
+        if (adoptExisting && existing.borrowed && findSkill(skillId)?.externalPath) {
+          existing.borrowed = false
+          existing.originalLink = undefined
+        }
         if (!existing.claims.includes(claim)) existing.claims.push(claim)
         continue
       }
@@ -598,6 +688,9 @@ export async function demoSetPolicy(
 ) {
   const source = state.sources.find((item) => item.id === sourceId)
   if (!source) throw new Error('来源不存在')
+  if (source.updatesRemoved) throw new Error('此来源已移除更新管理')
+  if (mode !== 'off' && !sourceUpdateState(source).canCheck)
+    throw new Error('本地文件夹仅支持手动同步')
   source.policy = { mode, intervalHours }
   task('settings', '更新来源策略', source.name)
   return save(state)
@@ -605,6 +698,7 @@ export async function demoSetPolicy(
 export async function demoCheckSource(sourceId: string, apply: boolean) {
   const source = state.sources.find((item) => item.id === sourceId)
   if (!source) throw new Error('来源不存在')
+  if (source.updatesRemoved) throw new Error('此来源已移除更新管理')
   source.lastChecked = now()
   source.nextCheck = new Date(Date.now() + source.policy.intervalHours * 3600000).toISOString()
   if (source.status !== 'healthy' && source.error) throw new Error(source.error)
@@ -687,4 +781,15 @@ export async function demoScanMany(paths: string[]): Promise<ScanResult> {
     ),
     warnings: results.flatMap((result) => result.warnings),
   }
+}
+
+export async function demoRemoveUpdateSource(sourceId: string, expectedRevision: number) {
+  if (state.revision !== expectedRevision) throw new Error('数据已变化，请重新确认移除更新管理')
+  const source = state.sources.find((item) => item.id === sourceId)
+  if (!source) throw new Error('来源不存在')
+  source.updatesRemoved = true
+  source.policy.mode = 'off'
+  source.nextCheck = ''
+  task('remove_update_source', '移除更新管理', source.name)
+  return save(state)
 }

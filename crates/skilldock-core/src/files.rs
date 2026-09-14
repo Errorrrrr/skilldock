@@ -256,18 +256,24 @@ pub fn scan(path: &Path) -> Result<ScanResult> {
     Ok(result)
 }
 pub fn tree_digest(root: &Path) -> Result<String> {
-    digest_tree(root, false)
+    digest_tree(root, false, &[])
 }
 
 pub fn content_digest(root: &Path) -> Result<String> {
-    digest_tree(root, true)
+    digest_tree(root, true, &[])
 }
 
 pub fn snapshot_matches(root: &Path, expected: &str) -> Result<bool> {
+    for include_lock in [false, true] {
+        let generated = generated_python_paths(root, include_lock)?;
+        if !generated.is_empty() && digest_tree(root, true, &generated)? == expected {
+            return Ok(true);
+        }
+    }
     Ok(tree_digest(root)? == expected || content_digest(root)? == expected)
 }
 
-fn digest_tree(root: &Path, ignore_finder: bool) -> Result<String> {
+fn digest_tree(root: &Path, ignore_finder: bool, excluded: &[PathBuf]) -> Result<String> {
     let canonical = fs::canonicalize(root)?;
     if fs::symlink_metadata(root)?.file_type().is_symlink() {
         return fail("不能把软链自身作为新来源，请选择原始内容目录");
@@ -279,6 +285,7 @@ fn digest_tree(root: &Path, ignore_finder: bool) -> Result<String> {
         .follow_links(false)
         .sort_by_file_name()
         .into_iter()
+        .filter_entry(|e| !excluded.iter().any(|p| e.path().starts_with(p)))
     {
         let e = entry.map_err(|e| crate::error::Error::Message(e.to_string()))?;
         let rel = e.path().strip_prefix(root).unwrap();
@@ -398,22 +405,27 @@ pub fn copy_tree_excluding(from: &Path, to: &Path, excluded: &[PathBuf]) -> Resu
     Ok(())
 }
 pub fn snapshot_tree(root: &Path, source: &Path) -> Result<String> {
-    snapshot_tree_with(root, source, tree_digest)
+    snapshot_tree_with(root, source, tree_digest, false)
 }
 
 pub fn snapshot_current_content(root: &Path, source: &Path) -> Result<String> {
-    snapshot_tree_with(root, source, content_digest)
+    snapshot_tree_with(root, source, content_digest, true)
 }
 
 fn snapshot_tree_with(
     root: &Path,
     source: &Path,
     digest_fn: fn(&Path) -> Result<String>,
+    allow_generated: bool,
 ) -> Result<String> {
     let digest = digest_fn(source)?;
     let target = root.join("objects").join(&digest).join("tree");
     if target.exists() {
-        if digest_fn(&target)? != digest {
+        if !(if allow_generated {
+            snapshot_matches(&target, &digest)?
+        } else {
+            digest_fn(&target)? == digest
+        }) {
             return fail("中央库快照已被外部修改，请先修复");
         }
         return Ok(digest);
@@ -785,4 +797,157 @@ pub fn manifest_digest(root: &Path) -> Result<String> {
         "{:x}",
         Sha256::digest(serde_json::to_vec(&tree_manifest(root, false)?)?)
     ))
+}
+// Recognize the bootstrap contract shipped by these Skills; a manifest alone is insufficient.
+pub fn rebuildable_python_skill(root: &Path) -> bool {
+    let regular = |p: &Path| fs::symlink_metadata(p).is_ok_and(|m| m.is_file());
+    if !regular(&root.join("SKILL.md"))
+        || !regular(&root.join("requirements.txt"))
+        || !regular(&root.join("scripts/bootstrap.py"))
+    {
+        return false;
+    }
+    let Ok(requirements) = fs::read_to_string(root.join("requirements.txt")) else {
+        return false;
+    };
+    if !requirements
+        .lines()
+        .any(|line| !line.trim().is_empty() && !line.trim().starts_with('#'))
+    {
+        return false;
+    }
+    let Ok(bootstrap) = fs::read_to_string(root.join("scripts/bootstrap.py")) else {
+        return false;
+    };
+    if ![
+        "def ensure_skill_deps(",
+        "venv.EnvBuilder(",
+        "_parse_requirements(",
+        "_install(",
+    ]
+    .iter()
+    .all(|part| bootstrap.contains(part))
+    {
+        return false;
+    }
+    fs::read_dir(root.join("scripts"))
+        .ok()
+        .is_some_and(|entries| {
+            entries.flatten().any(|entry| {
+                entry.file_name() != "bootstrap.py"
+                    && entry.path().extension().is_some_and(|e| e == "py")
+                    && regular(&entry.path())
+                    && fs::read_to_string(entry.path()).is_ok_and(|text| {
+                        text.contains("from bootstrap import ensure_skill_deps")
+                            && text
+                                .lines()
+                                .any(|line| line.trim() == "ensure_skill_deps(__file__)")
+                    })
+            })
+        })
+}
+
+pub fn python_environment_issues(root: &Path) -> Result<Vec<String>> {
+    Ok(local_import_exclusions(root)?.into_iter()
+        .filter(|p| p.file_name().is_some_and(|name| name == ".venv"))
+        .filter(|p| !p.parent().is_some_and(rebuildable_python_skill))
+        .map(|p| format!("运行环境 {} 未复制，未找到可识别的依赖清单及启动重建入口；请配置可迁移依赖后重新同步。", p.display())).collect())
+}
+
+fn generated_python_paths(root: &Path, include_lock: bool) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    let mut walker = WalkDir::new(root).follow_links(false).into_iter();
+    while let Some(entry) = walker.next() {
+        let entry = entry.map_err(|e| crate::error::Error::Message(e.to_string()))?;
+        if entry.file_type().is_dir()
+            && [".venv", "__pycache__", ".git"]
+                .iter()
+                .any(|n| entry.file_name() == *n)
+        {
+            walker.skip_current_dir();
+            continue;
+        }
+        if entry.file_name() != "SKILL.md" || !entry.file_type().is_file() {
+            continue;
+        }
+        let skill = entry.path().parent().unwrap();
+        if !rebuildable_python_skill(skill) {
+            continue;
+        }
+        if fs::symlink_metadata(skill.join(".venv")).is_ok_and(|m| m.is_dir()) {
+            paths.push(skill.join(".venv"));
+        }
+        if include_lock
+            && fs::symlink_metadata(skill.join(".venv.lock"))
+                .is_ok_and(|m| m.is_file() && m.len() == 0)
+        {
+            paths.push(skill.join(".venv.lock"));
+        }
+        for sub in WalkDir::new(skill)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(|e| e.file_name() != ".venv")
+        {
+            let sub = sub.map_err(|e| crate::error::Error::Message(e.to_string()))?;
+            if sub.file_name() == "__pycache__" && sub.file_type().is_dir() {
+                paths.push(sub.path().to_path_buf());
+            }
+        }
+    }
+    Ok(paths)
+}
+
+#[cfg(test)]
+mod python_runtime_tests {
+    use super::*;
+    fn fixture(root: &Path) {
+        fs::create_dir_all(root.join("scripts")).unwrap();
+        fs::write(root.join("SKILL.md"), "---\nname: demo\n---\nSkill").unwrap();
+        fs::write(root.join("requirements.txt"), "requests\n").unwrap();
+        fs::write(root.join("scripts/bootstrap.py"), "def ensure_skill_deps(caller):\n    venv.EnvBuilder()\n    _parse_requirements()\n    _install()\n").unwrap();
+        fs::write(
+            root.join("scripts/run.py"),
+            "from bootstrap import ensure_skill_deps\nensure_skill_deps(__file__)\n",
+        )
+        .unwrap();
+    }
+    #[test]
+    fn runtime_additions_do_not_hide_source_edits_or_change_backup_digest_rules() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fixture(root);
+        let digest = content_digest(root).unwrap();
+        fs::create_dir_all(root.join(".venv/bin")).unwrap();
+        fs::write(root.join(".venv/bin/generated"), "runtime").unwrap();
+        fs::write(root.join(".venv.lock"), "").unwrap();
+        fs::create_dir_all(root.join("scripts/__pycache__")).unwrap();
+        fs::write(root.join("scripts/__pycache__/run.pyc"), "cache").unwrap();
+        assert!(snapshot_matches(root, &digest).unwrap());
+        assert_ne!(tree_digest(root).unwrap(), digest);
+        assert!(python_environment_issues(root).unwrap().is_empty());
+        fs::write(root.join("scripts/run.py"), "from bootstrap import ensure_skill_deps\nensure_skill_deps(__file__)\nprint('changed')").unwrap();
+        assert!(!snapshot_matches(root, &digest).unwrap());
+    }
+    #[test]
+    fn manifest_alone_does_not_remove_environment_blocker() {
+        let temp = tempfile::tempdir().unwrap();
+        fixture(temp.path());
+        fs::create_dir(temp.path().join(".venv")).unwrap();
+        fs::remove_file(temp.path().join("scripts/run.py")).unwrap();
+        assert_eq!(python_environment_issues(temp.path()).unwrap().len(), 1);
+    }
+    #[test]
+    fn stored_empty_lock_remains_compatible_and_tracked_environment_stays_strict() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fixture(root);
+        fs::write(root.join(".venv.lock"), "").unwrap();
+        let old = content_digest(root).unwrap();
+        fs::create_dir(root.join(".venv")).unwrap();
+        fs::write(root.join(".venv/data"), "a").unwrap();
+        assert!(snapshot_matches(root, &old).unwrap());
+        let full = tree_digest(root).unwrap();
+        fs::write(root.join(".venv/data"), "b").unwrap();
+        assert!(!snapshot_matches(root, &full).unwrap());
+    }
 }

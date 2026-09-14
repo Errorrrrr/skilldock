@@ -1,7 +1,9 @@
 mod backups;
 pub mod error;
 pub mod files;
+mod git_packages;
 mod local_presets;
+mod local_sources;
 pub mod model;
 pub mod network;
 mod object_cleanup;
@@ -9,6 +11,7 @@ mod operations;
 mod packages;
 mod portable;
 mod source_binding;
+mod system_proxy;
 
 use error::{Result, fail};
 use files::Change;
@@ -134,6 +137,25 @@ impl Engine {
             ));
         };
         let mut state: Snapshot = serde_json::from_slice(&fs::read(root.join("state.json"))?)?;
+        // Older folder imports inferred a remote source from .git. Keep them local.
+        let local_sources: std::collections::BTreeSet<_> = state
+            .packages
+            .iter()
+            .filter(|p| !p.remote)
+            .flat_map(|p| p.scopes.iter().map(|scope| scope.source_id.clone()))
+            .collect();
+        for source in &mut state.sources {
+            if source.kind == "git" && local_sources.contains(&source.id) {
+                source.kind = "local".into();
+                source.url.clear();
+                source.reference.clear();
+            }
+            if !source.supports_remote_updates() {
+                source.policy.mode = "off".into();
+                source.next_check.clear();
+            }
+        }
+        Self::refresh_python_diagnostics(&mut state);
         Self::observe_installations(&mut state);
         if !matches!(state.schema_version, 1 | 2) {
             return fail("数据版本不兼容，请升级 SkillDock");
@@ -481,10 +503,23 @@ impl Engine {
         Ok(state)
     }
     pub async fn execute(&self, request: Value) -> Result<Value> {
+        let proxy = self.snapshot()?.settings.network_proxy;
+        network::with_proxy(proxy, self.execute_request(request)).await
+    }
+    async fn execute_request(&self, request: Value) -> Result<Value> {
         let action = text(&request, "action")?.to_string();
         match action.as_str() {
             "preview_bind_source" => self.bind_source(&request, true).await,
             "bind_source" => self.bind_source(&request, false).await,
+            "preview_git_package" => self.preview_git_package(&request).await,
+            "import_git_package" => self.import_git_package(&request),
+            "import_git" => {
+                let preview = self.preview_git_package(&request).await?;
+                let result = self.import_git_package(
+                    &json!({"token":preview["token"],"revision":preview["revision"]}),
+                )?;
+                Ok(result["snapshot"].clone())
+            }
             "import_package" => self.import_package(&request),
             "save_preset" if flag(&request, "syncApplied") => {
                 self.execute_local("save_preset", &request)?;
@@ -496,8 +531,17 @@ impl Engine {
                 self.reconcile_packages()?;
                 Ok(serde_json::to_value(self.snapshot()?)?)
             }
+            "preview_local_source" => self.preview_preset_folder(&request),
+            "save_local_source" => self.save_local_source(&request),
+            "apply_local_source" | "revoke_local_source" | "remove_local_source" => {
+                self.manage_local_source(&request)
+            }
             "preview_preset_folder" => self.preview_preset_folder(&request),
             "import_preset_folder" => self.import_preset_folder(&request),
+            "test_proxy" => {
+                let proxy: NetworkProxy = serde_json::from_value(request["networkProxy"].clone())?;
+                network::test_proxy(proxy).await
+            }
             "snapshot" => Ok(serde_json::to_value(self.snapshot()?)?),
             "configure" => Ok(serde_json::to_value(
                 self.configure(text(&request, "path")?)?,
@@ -559,44 +603,31 @@ impl Engine {
             "search_catalog" => Ok(serde_json::to_value(
                 network::search(text(&request, "query")?, &strings(&request, "sites")?).await?,
             )?),
-            "import_git" | "install_catalog" => {
+            "install_catalog" => {
                 let root = self
                     .root()?
                     .ok_or_else(|| error::Error::Message("请先设置统一目录".into()))?;
-                let prepared = if action == "import_git" {
-                    network::prepare_git(
-                        &root.join("cache"),
-                        text(&request, "url")?,
-                        optional(&request, "reference", "HEAD"),
-                        optional(&request, "subdir", ""),
-                    )
-                    .await?
+                let prepared = network::prepare_catalog(
+                    &root.join("cache"),
+                    text(&request, "slug")?,
+                    optional(&request, "site", "clawhub"),
+                )
+                .await?;
+                let info = prepared_info(&prepared);
+                let selected = if info.scan_subdir.is_empty() {
+                    vec![]
                 } else {
-                    network::prepare_catalog(
-                        &root.join("cache"),
-                        text(&request, "slug")?,
-                        optional(&request, "site", "clawhub"),
-                    )
-                    .await?
-                };
-                let mut info = prepared_info(&prepared);
-                let mut selected = vec![];
-                if action == "import_git" {
-                    info.scan_subdir = optional(&request, "subdir", "").replace('\\', "/");
-                }
-                {
-                    if !info.scan_subdir.is_empty() {
-                        selected = files::scan(&prepared.path.join(&info.scan_subdir))?
-                            .items
-                            .into_iter()
-                            .filter(|i| i.status == "ready")
-                            .map(|i| i.path)
-                            .collect();
-                        if selected.is_empty() {
-                            return fail("Git 子目录中未发现 Skill");
-                        }
+                    let paths: Vec<_> = files::scan(&prepared.path.join(&info.scan_subdir))?
+                        .items
+                        .into_iter()
+                        .filter(|i| i.status == "ready")
+                        .map(|i| i.path)
+                        .collect();
+                    if paths.is_empty() {
+                        return fail("来源子目录中未发现 Skill");
                     }
-                }
+                    paths
+                };
                 let state = self.import_folder(&prepared.path, selected, false, Some(info))?;
                 Ok(serde_json::to_value(state)?)
             }
@@ -659,6 +690,8 @@ impl Engine {
 }
 pub(crate) fn prepared_info(p: &network::PreparedSource) -> Source {
     Source {
+        updates_removed: None,
+        local_member_ids: None,
         id: id(),
         name: p.name.clone(),
         kind: p.kind.clone(),

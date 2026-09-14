@@ -136,7 +136,7 @@ async fn tray_action(
             match state.engine.snapshot() {
                 Ok(snapshot) => {
                     for source in snapshot.sources {
-                        if source.status == "detached" || source.kind == "local_reference" {
+                        if !source.supports_remote_updates() {
                             continue;
                         }
                         if let Err(error) = state.engine.check_source(&source.id, false).await {
@@ -168,9 +168,9 @@ async fn tray_action(
     let snapshot = state.engine.snapshot().map_err(|e| e.to_string())?;
     Ok(
         json!({"paused":state.paused.load(Ordering::SeqCst), "active":state.active.load(Ordering::SeqCst),
-        "skills":snapshot.skills.iter().map(|skill| &skill.name).collect::<std::collections::BTreeSet<_>>().len(), "sources":snapshot.sources.len(),
-        "scheduled":snapshot.sources.iter().filter(|s| s.status != "detached" && s.kind != "local_reference" && (s.policy.mode == "notify" || s.policy.mode == "auto")).count(),
-        "automatic":snapshot.sources.iter().filter(|s| s.policy.mode == "auto").count(),
+        "skills":snapshot.skills.iter().map(|skill| &skill.name).collect::<std::collections::BTreeSet<_>>().len(), "sources":snapshot.sources.iter().filter(|source| source.supports_remote_updates()).count(),
+        "scheduled":snapshot.sources.iter().filter(|s| s.supports_remote_updates() && (s.policy.mode == "notify" || s.policy.mode == "auto")).count(),
+        "automatic":snapshot.sources.iter().filter(|s| s.supports_remote_updates() && s.policy.mode == "auto").count(),
         "theme":snapshot.settings.theme}),
     )
 }
@@ -261,8 +261,9 @@ fn main() {
                             .sources
                             .iter()
                             .filter(|source| {
-                                ["available", "attention", "error"]
-                                    .contains(&source.status.as_str())
+                                source.supports_remote_updates()
+                                    && ["available", "attention", "error"]
+                                        .contains(&source.status.as_str())
                                     && before.as_ref().is_some_and(|b| {
                                         b.sources.iter().any(|old| {
                                             old.id == source.id

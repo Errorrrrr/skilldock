@@ -29,6 +29,7 @@ fn external_reference_roots(state: &Snapshot) -> Vec<&String> {
                 .flat_map(|preset| preset.locks.values()),
         )
         .filter_map(|skill| skill.external_path.as_ref())
+        .chain(state.unmanaged_target_paths.iter())
         .chain(
             state
                 .bindings
@@ -95,7 +96,7 @@ impl Engine {
         )?;
         if !used.is_empty() {
             return fail(
-                "本地引用包的资源链接仍指向当前统一库，请先调整这些依赖再迁移，避免旧库移除后失效",
+                "本地引用或已移除目标的保留链接仍指向当前统一库，请先调整这些依赖再迁移，避免旧库移除后失效",
             );
         }
         Ok(())

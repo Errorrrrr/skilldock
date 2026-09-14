@@ -174,6 +174,8 @@ fn build_plan(
     targets: &[String],
     claim: &str,
     pending: &[Change],
+    adopt_existing: bool,
+    replace_bindings: &[String],
 ) -> Result<DistributionPlan> {
     if skills.is_empty() || targets.is_empty() {
         return fail("请选择 Skill 和目标");
@@ -181,6 +183,7 @@ fn build_plan(
     let root = Path::new(&s.storage_root);
     let mut items = vec![];
     let mut paths = BTreeSet::new();
+    let mut comparisons = BTreeMap::new();
     for target_id in targets {
         let target = s
             .targets
@@ -197,6 +200,16 @@ fn build_plan(
                 .and_then(|path| Path::new(path).file_name())
                 .and_then(|name| name.to_str())
                 .unwrap_or(&skill.name);
+            let same_name_bindings: Vec<_> = s
+                .bindings
+                .iter()
+                .filter(|b| {
+                    b.target_id == target.id
+                        && s.skills.iter().any(|old| {
+                            old.id == b.skill_id && old.name.eq_ignore_ascii_case(&skill.name)
+                        })
+                })
+                .collect();
             let path = s
                 .bindings
                 .iter()
@@ -208,14 +221,29 @@ fn build_plan(
                         .find(|i| i.target_id == target.id && i.skill_id == skill.id)
                         .map(|i| PathBuf::from(&i.path))
                 })
+                .or_else(|| {
+                    (same_name_bindings.len() == 1)
+                        .then(|| PathBuf::from(&same_name_bindings[0].path))
+                })
                 .unwrap_or(Path::new(&target.path).join(files::clean_name(leaf)?));
             let mut item = PlanItem {
+                replacement: None,
                 skill_id: skill.id.clone(),
                 target_id: target.id.clone(),
                 path: path.display().to_string(),
                 action: "create".into(),
                 error: String::new(),
             };
+            let same_local_link = skill.external_path.is_some()
+                && fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink())
+                && fs::canonicalize(&path).ok().is_some_and(|entity| {
+                    Some(entity) == fs::canonicalize(skill_path(root, skill)).ok()
+                });
+            if same_name_bindings.len() > 1
+                && !same_name_bindings.iter().any(|b| b.skill_id == skill.id)
+            {
+                item.error = "目标中存在多个同名安装，请先在分发目标中处理重复关系".into();
+            }
             if path
                 .parent()
                 .and_then(|p| fs::canonicalize(p).ok())
@@ -238,7 +266,12 @@ fn build_plan(
                 item.error = "中央库内容缺失".into();
             }
             if let Some(b) = s.bindings.iter().find(|b| b.path == item.path) {
-                item.action = "reuse".into();
+                item.action = if b.borrowed && same_local_link {
+                    if adopt_existing { "adopt" } else { "borrow" }
+                } else {
+                    "reuse"
+                }
+                .into();
                 if !binding_matches(root, b)
                     && !pending.iter().any(|c| {
                         c.path == Path::new(&b.path)
@@ -248,7 +281,47 @@ fn build_plan(
                     item.error = "已有链接已被外部修改或丢失".into();
                 }
                 if b.skill_id != skill.id {
-                    item.error = "目标存在同名的其他 Skill".into();
+                    let blocking_claims: Vec<_> = b
+                        .claims
+                        .iter()
+                        .filter(|c| c.as_str() != "manual" && c.as_str() != claim)
+                        .cloned()
+                        .collect();
+                    let previous = binding_path(root, b);
+                    let next = skill_path(root, skill);
+                    let key = (previous.clone(), next.clone());
+                    let content_equal = *comparisons.entry(key).or_insert_with(|| {
+                        files::content_digest(&previous)
+                            .ok()
+                            .zip(files::content_digest(&next).ok())
+                            .map(|(a, b)| a == b)
+                    });
+                    item.replacement = Some(PlanReplacement {
+                        next_entity_path: next.display().to_string(),
+                        next_version: skill.version.clone(),
+                        binding_id: b.id.clone(),
+                        skill_id: b.skill_id.clone(),
+                        entity_path: previous.display().to_string(),
+                        version: b.version.clone(),
+                        claims: b.claims.clone(),
+                        blocking_claims: blocking_claims.clone(),
+                        content_equal,
+                        restores_original: b.borrowed || b.original_link.is_some(),
+                    });
+                    if item.error.is_empty() {
+                        if !blocking_claims.is_empty() {
+                            item.error =
+                                "旧来源仍被其他预设或本地来源引用，请先解除这些引用".into();
+                        } else if !fs::symlink_metadata(&path)
+                            .is_ok_and(|m| m.file_type().is_symlink())
+                        {
+                            item.error = "目标不是可管理的软链，拒绝切换来源".into();
+                        } else if replace_bindings.contains(&b.id) {
+                            item.action = "replace".into();
+                        } else {
+                            item.error = "目标已使用其他来源，请确认切换来源".into();
+                        }
+                    }
                 } else if b.digest != skill.bundle_digest
                     || b.relative_path != skill.relative_path
                     || b.external_path != skill.external_path
@@ -275,12 +348,8 @@ fn build_plan(
                     }
                 }
             } else if files::exists(&path) {
-                if skill.external_path.is_some()
-                    && fs::symlink_metadata(&path)?.file_type().is_symlink()
-                    && fs::canonicalize(&path).ok()
-                        == fs::canonicalize(skill_path(root, skill)).ok()
-                {
-                    item.action = "borrow".into();
+                if same_local_link {
+                    item.action = if adopt_existing { "adopt" } else { "borrow" }.into();
                 } else if s.external_installations.iter().any(|i| {
                     i.skill_id == skill.id
                         && i.target_id == target.id
@@ -312,8 +381,26 @@ pub(crate) fn distribute(
     targets: &[String],
     claim: &str,
     allow_takeover: bool,
+    adopt_existing: bool,
+    replace_bindings: &[String],
 ) -> Result<()> {
-    let plan = build_plan(s, skills, targets, claim, changes)?;
+    let plan = build_plan(
+        s,
+        skills,
+        targets,
+        claim,
+        changes,
+        adopt_existing,
+        replace_bindings,
+    )?;
+    if replace_bindings.iter().any(|id| {
+        !plan
+            .items
+            .iter()
+            .any(|i| i.replacement.as_ref().is_some_and(|r| &r.binding_id == id))
+    }) {
+        return fail("来源切换选择已失效，请重新预览");
+    }
     if !allow_takeover && plan.items.iter().any(|i| i.action == "takeover") {
         return fail("存在外部已有安装，请确认接管后再应用预设");
     }
@@ -342,6 +429,43 @@ pub(crate) fn distribute(
     for item in plan.items {
         let skill = skills.iter().find(|x| x.id == item.skill_id).unwrap();
         if let Some(b) = s.bindings.iter_mut().find(|b| b.path == item.path) {
+            if item.action == "replace" {
+                let before = fs::read_link(&b.path)?;
+                if !binding_matches(root, b) {
+                    return fail("来源切换前目标链接已变化，请重新预览");
+                }
+                changes.push(Change {
+                    restore: false,
+                    backup_digest: None,
+                    path: PathBuf::from(&b.path),
+                    before: Some(before.clone()),
+                    after: Some(skill_path(root, skill)),
+                    backup: None,
+                });
+                if b.borrowed {
+                    b.original_link = Some(before.display().to_string());
+                }
+                b.borrowed = false;
+                b.skill_id = skill.id.clone();
+                b.external_path = skill.external_path.clone();
+                b.digest = skill.bundle_digest.clone();
+                b.version = skill.version.clone();
+                b.relative_path = skill.relative_path.clone();
+                b.follow = false;
+            }
+            if item.action == "adopt" {
+                // Normalize relative links so managed-link validation can verify them exactly.
+                changes.push(Change {
+                    restore: false,
+                    backup_digest: None,
+                    path: PathBuf::from(&b.path),
+                    before: Some(fs::read_link(&b.path)?),
+                    after: Some(skill_path(root, skill)),
+                    backup: None,
+                });
+                b.borrowed = false;
+                b.original_link = None;
+            }
             if item.action == "update" {
                 changes.push(Change {
                     restore: false,
@@ -365,7 +489,7 @@ pub(crate) fn distribute(
                     restore: false,
                     backup_digest: None,
                     path: PathBuf::from(&item.path),
-                    before: if item.action == "takeover" {
+                    before: if matches!(item.action.as_str(), "takeover" | "adopt") {
                         Some(fs::read_link(&item.path)?)
                     } else {
                         None
@@ -607,6 +731,8 @@ impl Engine {
         }
         let digest = files::snapshot_current_content(root, snapshot_source)?;
         let mut source = source_info.unwrap_or(Source {
+            updates_removed: None,
+            local_member_ids: None,
             id: id(),
             name: path
                 .file_name()
@@ -624,7 +750,7 @@ impl Engine {
             next_check: String::new(),
             status: if adopt { "detached" } else { "current" }.into(),
             error: if adopt {
-                "原安装位置已归集；更新前请重新绑定原始来源"
+                "原安装位置已归集；此记录仅保留归集来源，不代表共同的更新仓库"
             } else {
                 ""
             }
@@ -830,6 +956,8 @@ impl Engine {
                             .unwrap_or_else(|| lookup_skill(&s, id).cloned())
                     })
                     .collect::<Result<Vec<_>>>()?
+            } else if let Some(source_id) = claim.strip_prefix("source:") {
+                Self::local_source_skills(&s, source_id)?
             } else {
                 unique(strings(r, "skillIds")?)
                     .iter()
@@ -842,6 +970,8 @@ impl Engine {
                 &unique(strings(r, "targetIds")?),
                 claim,
                 &[],
+                flag(r, "adoptExisting"),
+                &strings(r, "replaceBindingIds")?,
             )?)?);
         }
         if action == "diagnose" {
@@ -876,6 +1006,8 @@ impl Engine {
             action,
             match action {
                 "add_target" => "添加分发目标",
+                "remove_update_source" => "移除更新管理（保留 Skill 与分发）",
+                "remove_target" => "移除分发目标（保留文件）",
                 "distribute" => "分发 Skill",
                 "refresh_snapshot" => "重新收录统一库当前内容",
                 "revoke" => "取消分发",
@@ -889,6 +1021,41 @@ impl Engine {
             },
             |s, root, changes| {
                 match action {
+                    "remove_update_source" => {
+                        if r.get("expectedRevision").and_then(Value::as_u64) != Some(s.revision as u64) {
+                            return fail("数据已变化，请重新确认移除更新管理");
+                        }
+                        let source = s.sources.iter_mut().find(|source| source.id == optional(r, "sourceId", ""))
+                            .ok_or_else(|| error::Error::Message("来源不存在".into()))?;
+                        source.updates_removed = Some(true);
+                        source.policy.mode = "off".into();
+                        source.next_check.clear();
+                    }
+                    "remove_target" => {
+                        if r.get("expectedRevision").and_then(Value::as_u64)
+                            != Some(s.revision as u64)
+                        {
+                            return fail("数据已变化，请关闭弹窗后重新确认移除目标");
+                        }
+                        let target_id = text(r, "targetId")?;
+                        let target = s
+                            .targets
+                            .iter()
+                            .find(|t| t.id == target_id)
+                            .cloned()
+                            .ok_or_else(|| {
+                                error::Error::Message("目标不存在，请刷新列表".into())
+                            })?;
+                        // Retained links must remain visible to object cleanup and migration checks.
+                        if !s.unmanaged_target_paths.contains(&target.path) {
+                            s.unmanaged_target_paths.push(target.path);
+                        }
+                        s.bindings.retain(|b| b.target_id != target_id);
+                        s.preset_applications.retain(|a| a.target_id != target_id);
+                        s.external_installations
+                            .retain(|i| i.target_id != target_id);
+                        s.targets.retain(|t| t.id != target_id);
+                    }
                     "add_target" => {
                         let p = files::absolute(text(r, "path")?)?;
                         if files::protected(&p) || p.starts_with(root) || root.starts_with(&p) {
@@ -968,6 +1135,8 @@ impl Engine {
                             &unique(strings(r, "targetIds")?),
                             claim,
                             flag(r, "takeover"),
+                            flag(r, "adoptExisting"),
+                            &strings(r, "replaceBindingIds")?,
                         )?;
                     }
                     "revoke" => {
@@ -1068,7 +1237,8 @@ impl Engine {
                                     .ok_or_else(|| error::Error::Message("预设成员内容缺失".into()))
                             })
                             .collect::<Result<Vec<_>>>()?;
-                        // Release removed members against actual claims, then preflight the complete new revision.
+                        let replacements = strings(r, "replaceBindingIds")?;
+                        // Keep selected source switches intact until their claims and links are validated.
                         let old = s
                             .bindings
                             .iter()
@@ -1076,6 +1246,7 @@ impl Engine {
                                 tids.contains(&b.target_id)
                                     && b.claims.contains(&claim)
                                     && !preset.skill_ids.contains(&b.skill_id)
+                                    && !replacements.contains(&b.id)
                             })
                             .map(|b| b.id.clone())
                             .collect::<Vec<_>>();
@@ -1088,6 +1259,8 @@ impl Engine {
                             &tids,
                             &claim,
                             flag(r, "takeover"),
+                            flag(r, "adoptExisting"),
+                            &strings(r, "replaceBindingIds")?,
                         )?;
                         for tid in &tids {
                             let follow =
@@ -1152,6 +1325,9 @@ impl Engine {
                     }
                     "remove_skill" => {
                         let sid = text(r, "skillId")?;
+                        if s.sources.iter().any(|source| source.local_member_ids.as_ref().is_some_and(|ids| ids.iter().any(|id| id == sid))) {
+                            return fail("Skill 仍属于本地来源，请先在来源中调整成员");
+                        }
                         if s.packages
                             .iter()
                             .any(|p| p.member_ids.iter().any(|id| id == sid))
@@ -1173,6 +1349,9 @@ impl Engine {
                             .iter_mut()
                             .find(|x| x.id == optional(r, "sourceId", ""))
                             .ok_or_else(|| error::Error::Message("来源不存在".into()))?;
+                        if source.updates_removed == Some(true) {
+                            return fail("此来源已移除更新管理");
+                        }
                         if source.kind == "local_reference" {
                             return fail("本地引用直接跟随原目录，无需定时更新");
                         }
@@ -1180,8 +1359,8 @@ impl Engine {
                         if !["off", "notify", "auto"].contains(&mode) {
                             return fail("无效更新模式");
                         }
-                        if source.status == "detached" && mode != "off" {
-                            return fail("归集后原目录是中央库软链，请重新绑定可更新的原始来源");
+                        if !source.supports_remote_updates() && mode != "off" {
+                            return fail("仅从远程 Git 或网站获取的来源支持定时更新；本地文件夹请手动扫描并确认同步");
                         }
                         let hours = r.get("intervalHours").and_then(Value::as_u64).unwrap_or(24);
                         if !(1..=8760).contains(&hours) {
@@ -1210,6 +1389,11 @@ impl Engine {
                         b.follow = flag(r, "follow");
                     }
                     "settings" => {
+                        if let Some(value) = r.get("networkProxy") {
+                            let proxy: NetworkProxy = serde_json::from_value(value.clone())?;
+                            network::validate_proxy(&proxy)?;
+                            s.settings.network_proxy = proxy;
+                        }
                         if let Some(value) = r.get("backupRetention") {
                             let count = value
                                 .as_u64()
@@ -1332,6 +1516,10 @@ impl Engine {
         })
     }
     pub async fn check_source(&self, source_id: &str, apply: bool) -> Result<Snapshot> {
+        let proxy = self.snapshot()?.settings.network_proxy;
+        network::with_proxy(proxy, self.check_source_with_proxy(source_id, apply)).await
+    }
+    async fn check_source_with_proxy(&self, source_id: &str, apply: bool) -> Result<Snapshot> {
         let baseline = self.snapshot()?;
         let source = baseline
             .sources
@@ -1339,12 +1527,15 @@ impl Engine {
             .find(|s| s.id == source_id)
             .cloned()
             .ok_or_else(|| error::Error::Message("来源不存在".into()))?;
+        if source.updates_removed == Some(true) {
+            return fail("此来源已移除更新管理");
+        }
         if source.kind == "local_reference" {
             return Ok(baseline);
         }
         if source.status == "detached" {
             return fail(
-                "尚未配置更新来源，请在“来源与计划”中配置 Git 仓库或独立源码目录；当前 Skill 仍可正常使用",
+                "此归集记录没有独立更新来源，请从实际 Git 仓库或源码包导入并核对成员；当前 Skill 仍可正常使用",
             );
         }
         let prepared = match source.kind.as_str() {
@@ -1385,16 +1576,7 @@ impl Engine {
         {
             return fail("本地来源与统一库互相包含，拒绝更新");
         }
-        let dependency_issues: Vec<String> = files::local_import_exclusions(&original_path)?
-            .iter()
-            .filter(|p| p.file_name().is_some_and(|n| n == ".venv"))
-            .map(|p| {
-                format!(
-                    "来源运行环境 {} 未复制，需准备可迁移依赖后同步；已阻止分发。",
-                    p.display()
-                )
-            })
-            .collect();
+        let dependency_issues = files::python_environment_issues(&original_path)?;
         let local_view = if source.kind == "local" {
             self.local_source_view(&original_path, true)
                 .map_err(|e| self.source_failure(source_id, e.to_string()))?
@@ -1436,6 +1618,9 @@ impl Engine {
                     .iter()
                     .find(|x| x.id == source_id)
                     .ok_or_else(|| error::Error::Message("来源已移除".into()))?;
+                if src.updates_removed == Some(true) {
+                    return fail("检查期间此来源已移除更新管理");
+                }
                 if src.version != source.version
                     || src.kind != source.kind
                     || src.url != source.url
@@ -1453,29 +1638,37 @@ impl Engine {
                         .filter(|p| p.scopes.iter().any(|scope| scope.source_id == source_id))
                     {
                         let mut issues = dependency_issues.clone();
-                        for path in files::local_import_exclusions(Path::new(&package.path))
-                            .unwrap_or_default()
-                            .iter()
-                            .filter(|p| p.file_name().is_some_and(|n| n == ".venv"))
-                        {
-                            issues.push(format!(
-                                "原包运行环境 {} 未复制，请审阅可迁移依赖。",
-                                path.display()
-                            ));
+                        if !package.remote && Path::new(&package.path).is_dir() {
+                            issues.extend(files::python_environment_issues(Path::new(
+                                &package.path,
+                            ))?);
                         }
+                        issues.sort();
+                        issues.dedup();
                         package.issues = issues;
                     }
                 }
                 let changed = s
                     .skills
                     .iter()
-                    .any(|x| x.source_id == source_id && x.bundle_digest != digest);
+                    .any(|x| x.source_id == source_id && x.bundle_digest != digest)
+                    || scanned
+                        .items
+                        .iter()
+                        .filter(|item| item.status == "ready")
+                        .any(|item| {
+                            let relative = Path::new(&item.path)
+                                .strip_prefix(&path)
+                                .unwrap()
+                                .to_string_lossy()
+                                .replace('\\', "/");
+                            Self::package_accepts_new(s, source_id, &relative)
+                                && !s.skills.iter().any(|skill| {
+                                    skill.source_id == source_id && skill.relative_path == relative
+                                })
+                        });
                 let mut status = if changed { "available" } else { "current" }.to_string();
-                let mut details = if src.status == "attention" && !src.error.is_empty() {
-                    vec![src.error.clone()]
-                } else {
-                    vec![]
-                };
+                let mut details = Vec::new();
                 if !changed && !details.is_empty() {
                     status = "attention".into();
                 }
@@ -1515,7 +1708,7 @@ impl Engine {
                     let additions: Vec<_> = entries
                         .iter()
                         .filter(|(rel, _)| {
-                            Self::package_contains(s, source_id, rel)
+                            Self::package_accepts_new(s, source_id, rel)
                                 && !s
                                     .skills
                                     .iter()
@@ -1563,9 +1756,11 @@ impl Engine {
                     let new_count = entries
                         .keys()
                         .filter(|rel| {
-                            !s.skills
-                                .iter()
-                                .any(|x| x.source_id == source_id && &x.relative_path == *rel)
+                            !Self::package_accepts_new(s, source_id, rel)
+                                && !s
+                                    .skills
+                                    .iter()
+                                    .any(|x| x.source_id == source_id && &x.relative_path == *rel)
                         })
                         .count();
                     if new_count > 0 {
@@ -1637,9 +1832,13 @@ impl Engine {
                 let pending_count = current_entries
                     .keys()
                     .filter(|rel| {
-                        !s.skills
+                        !s.packages
                             .iter()
-                            .any(|i| i.source_id == source_id && &i.relative_path == *rel)
+                            .any(|p| p.scopes.iter().any(|scope| scope.source_id == source_id))
+                            && !s
+                                .skills
+                                .iter()
+                                .any(|i| i.source_id == source_id && &i.relative_path == *rel)
                     })
                     .count();
                 if pending_count > 0 {
@@ -1684,8 +1883,7 @@ impl Engine {
             return Ok(());
         }
         for source in state.sources {
-            if source.status != "detached"
-                && source.kind != "local_reference"
+            if source.supports_remote_updates()
                 && source.policy.mode != "off"
                 && chrono::DateTime::parse_from_rfc3339(&source.next_check)
                     .map(|d| d <= chrono::Utc::now())

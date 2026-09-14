@@ -167,7 +167,7 @@ pub async fn search(query: &str, sites: &[String]) -> Result<CatalogResult> {
         }
     }
 
-    let client = http_client(SEARCH_TIMEOUT)?;
+    let client = http_client(SEARCH_TIMEOUT).await?;
     let semaphore = Arc::new(Semaphore::new(SEARCH_CONCURRENCY));
     let mut tasks = JoinSet::new();
     for (index, endpoint) in endpoints.into_iter().enumerate() {
@@ -246,7 +246,7 @@ pub async fn prepare_catalog(cache: &Path, slug: &str, site: &str) -> Result<Pre
             (None, requested.as_str())
         };
     let slug = validate_slug(raw_slug)?;
-    let metadata_client = http_client(SEARCH_TIMEOUT)?;
+    let metadata_client = http_client(SEARCH_TIMEOUT).await?;
 
     let mut detail_url = endpoint_url(&endpoint.api, &["skills", &slug])?;
     detail_url.set_query(None);
@@ -307,7 +307,7 @@ pub async fn prepare_catalog(cache: &Path, slug: &str, site: &str) -> Result<Pre
             .query_pairs_mut()
             .append_pair("ownerHandle", owner);
     }
-    let download_client = http_client(DOWNLOAD_TIMEOUT)?;
+    let download_client = http_client(DOWNLOAD_TIMEOUT).await?;
     let download_response = download_client
         .get(download_url.clone())
         .send()
@@ -1083,8 +1083,21 @@ fn endpoint_url(base: &Url, segments: &[&str]) -> Result<Url> {
     Ok(url)
 }
 
-fn http_client(timeout: Duration) -> Result<Client> {
-    Client::builder()
+async fn http_client(timeout: Duration) -> Result<Client> {
+    let proxy = NETWORK_PROXY.try_with(Clone::clone).unwrap_or_default();
+    let resolved = crate::system_proxy::resolve(&proxy).await?;
+    let bypass = reqwest::NoProxy::from_string(&resolved.bypass);
+    let rule = reqwest::Proxy::custom(move |url| {
+        let address = resolved.for_url(url.as_str());
+        if address.is_empty() {
+            None
+        } else {
+            Some(address.to_string())
+        }
+    })
+    .no_proxy(bypass);
+    let builder = Client::builder().no_proxy().proxy(rule);
+    builder
         .user_agent(USER_AGENT)
         .connect_timeout(Duration::from_secs(10))
         .timeout(timeout)
@@ -1286,6 +1299,55 @@ async fn run_git_with_config(
     isolate_config: bool,
 ) -> Result<Output> {
     let mut command = Command::new("git");
+    let proxy = NETWORK_PROXY.try_with(Clone::clone).unwrap_or_default();
+    let resolved = crate::system_proxy::resolve(&proxy).await?;
+    {
+        let address = &resolved.http;
+        for key in [
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "all_proxy",
+            "NO_PROXY",
+            "no_proxy",
+        ] {
+            command.env_remove(key);
+        }
+        command.args(["-c", &format!("http.proxy={address}")]);
+        let mut urls: Vec<String> = args
+            .iter()
+            .filter(|a| a.starts_with("https://") || a.starts_with("http://"))
+            .cloned()
+            .collect();
+        if let Some(path) = cwd {
+            let output = Command::new("git")
+                .current_dir(path)
+                .args(["config", "--get", "remote.origin.url"])
+                .output()
+                .await?;
+            if output.status.success() {
+                urls.push(String::from_utf8_lossy(&output.stdout).trim().to_string());
+            }
+        }
+        // A matching URL-specific Git setting takes precedence over http.proxy.
+        for url in urls {
+            if let Ok(parsed) = reqwest::Url::parse(&url) {
+                if ["http", "https"].contains(&parsed.scheme()) {
+                    command.args([
+                        "-c",
+                        &format!("http.{url}.proxy={}", resolved.for_url(&url)),
+                    ]);
+                }
+            }
+        }
+        command
+            .env("https_proxy", &resolved.https)
+            .env("http_proxy", &resolved.http)
+            .env("no_proxy", &resolved.bypass);
+    }
+
     command
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
@@ -1458,4 +1520,66 @@ async fn prepare_skills_sh(cache: &Path, identity: &str) -> Result<PreparedSourc
     prepared.reference = identity.into();
     prepared.name = entries[0].name.clone();
     Ok(prepared)
+}
+
+// Request-scoped settings keep concurrent engines and connection tests isolated.
+tokio::task_local! { static NETWORK_PROXY: crate::NetworkProxy; }
+
+pub(crate) async fn with_proxy<T>(
+    proxy: crate::NetworkProxy,
+    task: impl std::future::Future<Output = T>,
+) -> T {
+    NETWORK_PROXY.scope(proxy, task).await
+}
+
+pub(crate) fn validate_proxy(proxy: &crate::NetworkProxy) -> Result<()> {
+    if !["system", "inherit", "direct", "manual"].contains(&proxy.mode.as_str()) {
+        return fail("无效代理模式");
+    }
+    if proxy.mode == "manual" {
+        let url = reqwest::Url::parse(&proxy.url)
+            .map_err(|_| Error::Message("请输入有效代理地址，例如 http://127.0.0.1:7897".into()))?;
+        if !["http", "https"].contains(&url.scheme())
+            || url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || url.path() != "/"
+        {
+            return fail("代理仅支持 HTTP/HTTPS 地址，不支持账号密码、路径或查询参数");
+        }
+    }
+    Ok(())
+}
+
+pub(crate) async fn test_proxy(proxy: crate::NetworkProxy) -> Result<serde_json::Value> {
+    validate_proxy(&proxy)?;
+    with_proxy(proxy, async {
+        let resolved = crate::system_proxy::resolve(&NETWORK_PROXY.with(Clone::clone)).await?;
+        let route = if resolved.https.is_empty() {
+            "当前配置对 HTTPS 使用直连；若连接失败，请启用系统安全网页代理或自定义代理"
+        } else {
+            "已读取 HTTPS 代理"
+        };
+        let response = http_client(Duration::from_secs(15))
+            .await?
+            .get("https://github.com")
+            .send()
+            .await
+            .map_err(|_| Error::Message(format!("HTTP 连接失败：{route}")))?;
+        if !response.status().is_success() {
+            return fail(format!("HTTP 测试失败：{}", response.status()));
+        }
+        let args = vec![
+            "ls-remote".into(),
+            "--exit-code".into(),
+            "https://github.com/zenstory-ai/drama-skills.git".into(),
+            "HEAD".into(),
+        ];
+        let output = run_git(None, &args, Duration::from_secs(15)).await?;
+        require_git_success("Git 连接测试", &output)?;
+        Ok(serde_json::json!({"message":"HTTP 与 Git 连接均成功"}))
+    })
+    .await
 }

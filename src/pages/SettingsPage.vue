@@ -27,7 +27,9 @@ import { defaultCatalogSites, normalizeCatalogSites, catalogSiteKey } from '@/se
 import type { CatalogSite } from '@/services/types'
 
 const app = useAppStore()
-const section = ref<'storage' | 'directories' | 'sites' | 'updates' | 'app' | 'general'>('storage')
+const section = ref<
+  'storage' | 'directories' | 'sites' | 'updates' | 'app' | 'general' | 'network'
+>('storage')
 const migrateOpen = ref(false)
 const migrateConfirm = ref(false)
 const newPath = ref('')
@@ -40,6 +42,28 @@ const appUpdate = ref<{
 } | null>(null)
 const catalogSites = ref<CatalogSite[]>(normalizeCatalogSites(defaultCatalogSites))
 const siteError = ref('')
+const proxyMode = ref('system')
+const proxyUrl = ref('')
+const proxyTesting = ref(false)
+const proxyMessage = ref('')
+const proxyError = ref(false)
+watch([proxyMode, proxyUrl], () => {
+  proxyMessage.value = ''
+})
+async function testProxy() {
+  proxyTesting.value = true
+  proxyMessage.value = ''
+  proxyError.value = false
+  try {
+    const result = await api.testProxy({ mode: proxyMode.value, url: proxyUrl.value.trim() })
+    proxyMessage.value = result.message
+  } catch (e) {
+    proxyMessage.value = e instanceof Error ? e.message : String(e)
+    proxyError.value = true
+  } finally {
+    proxyTesting.value = false
+  }
+}
 const agentProfiles = ref(cloneAgentProfiles())
 const autoStart = ref(false)
 const restartConfirm = ref(false)
@@ -59,6 +83,11 @@ watch(
     }
     if (JSON.stringify(s.agentProfiles) !== JSON.stringify(previous?.agentProfiles))
       agentProfiles.value = cloneAgentProfiles(s.agentProfiles)
+    if (JSON.stringify(s.networkProxy) !== JSON.stringify(previous?.networkProxy)) {
+      proxyMode.value =
+        !s.networkProxy?.mode || s.networkProxy.mode === 'inherit' ? 'system' : s.networkProxy.mode
+      proxyUrl.value = s.networkProxy?.url || ''
+    }
     closeToTray.value = s.closeToTray
     theme.value = s.theme
     updateMode.value = s.updateMode
@@ -141,6 +170,7 @@ async function saveSettings() {
   await app.mutate(
     () =>
       api.settings({
+        networkProxy: { mode: proxyMode.value, url: proxyUrl.value.trim() },
         catalogSites: sites,
         agentProfiles: cloneAgentProfiles(agentProfiles.value),
         closeToTray: closeToTray.value,
@@ -210,6 +240,9 @@ const themeOptions = [
     </header>
     <div class="settings-layout">
       <nav class="panel settings-nav">
+        <button :class="{ active: section === 'network' }" @click="section = 'network'">
+          网络代理
+        </button>
         <button :class="{ active: section === 'storage' }" @click="section = 'storage'">存储</button
         ><button :class="{ active: section === 'sites' }" @click="section = 'sites'">
           网站来源</button
@@ -224,6 +257,49 @@ const themeOptions = [
       </nav>
       <section class="panel settings-section">
         <AgentDirectories v-if="section === 'directories'" v-model="agentProfiles" />
+        <template v-else-if="section === 'network'">
+          <div class="panel-header" style="padding: 0 0 13px">
+            <h3 class="panel-title">网络代理</h3>
+          </div>
+          <p class="choice-meta">
+            用于 Git 导入、网站检索、Skill 下载和来源更新。保存后新请求立即生效，不修改系统代理。
+          </p>
+          <label class="field"
+            ><span class="field-label">连接方式</span>
+            <AppSelect
+              v-model="proxyMode"
+              :disabled="proxyTesting"
+              :options="[
+                { value: 'system', label: '跟随系统代理' },
+                { value: 'direct', label: '直连' },
+                { value: 'manual', label: '自定义代理' },
+              ]"
+            />
+          </label>
+          <label v-if="proxyMode === 'manual'" class="field" style="margin-top: 16px"
+            ><span class="field-label">代理地址</span>
+            <input
+              v-model="proxyUrl"
+              :disabled="proxyTesting"
+              class="input"
+              placeholder="http://127.0.0.1:7897"
+            />
+            <span class="choice-meta">支持 HTTP / HTTPS 代理；暂不支持带账号密码的地址。</span>
+          </label>
+          <p v-if="proxyMode === 'system'" class="choice-meta">
+            读取系统已启用的 HTTP/HTTPS 代理及绕过列表，不依赖终端环境。未启用时直连；PAC
+            自动代理暂不支持，可改用自定义代理。
+          </p>
+          <Button style="margin-top: 16px" :disabled="proxyTesting" @click="testProxy">{{
+            proxyTesting ? '正在测试 HTTP 与 Git…' : '测试连接'
+          }}</Button>
+          <p class="choice-meta">
+            测试当前填写的配置，无需先保存；分别检查 GitHub 的 HTTP 和 Git 连接。
+          </p>
+          <p v-if="proxyMessage" :class="proxyError ? 'field-error' : 'callout'" role="status">
+            {{ proxyMessage }}
+          </p>
+        </template>
         <template v-else-if="section === 'storage'"
           ><div class="panel-header" style="padding: 0 0 13px">
             <h3 class="panel-title">
