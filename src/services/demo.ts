@@ -681,17 +681,34 @@ export async function demoImportGit(url: string, reference: string, subdir?: str
   task('import', '导入 Git 仓库', `${url} · ${reference}`)
   return save(state)
 }
+function nextDemoCheck(policy: Source['policy']) {
+  if (policy.mode === 'off') return ''
+  if (!policy.dailyTime) return new Date(Date.now() + policy.intervalHours * 3600000).toISOString()
+  const now = new Date()
+  const next = new Date(now)
+  const [hours, minutes] = policy.dailyTime.split(':').map(Number)
+  next.setHours(hours!, minutes!, 0, 0)
+  if (next <= now) {
+    next.setDate(next.getDate() + 1)
+    next.setHours(hours!, minutes!, 0, 0)
+  }
+  return next.toISOString()
+}
 export async function demoSetPolicy(
   sourceId: string,
   mode: 'off' | 'notify' | 'auto',
   intervalHours: number,
+  dailyTime?: string,
 ) {
   const source = state.sources.find((item) => item.id === sourceId)
   if (!source) throw new Error('来源不存在')
   if (source.updatesRemoved) throw new Error('此来源已移除更新管理')
   if (mode !== 'off' && !sourceUpdateState(source).canCheck)
     throw new Error('本地文件夹仅支持手动同步')
-  source.policy = { mode, intervalHours }
+  if (dailyTime !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(dailyTime))
+    throw new Error('每天执行时间应为 HH:mm（00:00 至 23:59）')
+  source.policy = { mode, intervalHours, dailyTime }
+  source.nextCheck = nextDemoCheck(source.policy)
   task('settings', '更新来源策略', source.name)
   return save(state)
 }
@@ -700,7 +717,7 @@ export async function demoCheckSource(sourceId: string, apply: boolean) {
   if (!source) throw new Error('来源不存在')
   if (source.updatesRemoved) throw new Error('此来源已移除更新管理')
   source.lastChecked = now()
-  source.nextCheck = new Date(Date.now() + source.policy.intervalHours * 3600000).toISOString()
+  source.nextCheck = nextDemoCheck(source.policy)
   if (source.status !== 'healthy' && source.error) throw new Error(source.error)
   task(
     'update',

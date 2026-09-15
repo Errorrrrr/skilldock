@@ -1366,13 +1366,17 @@ impl Engine {
                         if !(1..=8760).contains(&hours) {
                             return fail("更新间隔应为 1 至 8760 小时");
                         }
+                        let daily_time = match r.get("dailyTime") {
+                            None | Some(Value::Null) => None,
+                            Some(Value::String(value)) if crate::schedule::valid_daily_time(value) => Some(value.clone()),
+                            _ => return fail("每天执行时间应为 HH:mm（00:00 至 23:59）"),
+                        };
                         source.policy = Policy {
                             mode: mode.into(),
                             interval_hours: hours as u32,
+                            daily_time,
                         };
-                        source.next_check = (chrono::Utc::now()
-                            + chrono::Duration::hours(hours as i64))
-                        .to_rfc3339();
+                        source.next_check = crate::schedule::next_check(&source.policy);
                     }
                     "set_follow" => {
                         let b = s
@@ -1504,9 +1508,7 @@ impl Engine {
                 src.status = "error".into();
                 src.error = message.clone();
                 src.last_checked = now();
-                src.next_check = (chrono::Utc::now()
-                    + chrono::Duration::hours(src.policy.interval_hours as i64))
-                .to_rfc3339();
+                src.next_check = crate::schedule::next_check(&src.policy);
             }
             Ok(())
         });
@@ -1860,9 +1862,7 @@ impl Engine {
                 }
                 let src = s.sources.iter_mut().find(|x| x.id == source_id).unwrap();
                 src.last_checked = now();
-                src.next_check = (chrono::Utc::now()
-                    + chrono::Duration::hours(src.policy.interval_hours as i64))
-                .to_rfc3339();
+                src.next_check = crate::schedule::next_check(&src.policy);
                 src.status = status;
                 src.error = details.join("；");
                 if apply {
