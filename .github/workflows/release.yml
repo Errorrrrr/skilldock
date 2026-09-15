@@ -119,6 +119,9 @@ jobs:
           updaterJsonPreferNsis: true
           tauriScript: pnpm tauri
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} -- --locked
+      - name: Verify macOS bundle signature
+        if: runner.os == 'macOS'
+        run: codesign --verify --deep --strict "target/${{ matrix.target }}/release/bundle/macos/SkillDock.app"
       - name: Verify artifacts against embedded public key
         run: node scripts/release.mjs verify-local ${{ matrix.target }}
   publish:
