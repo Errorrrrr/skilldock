@@ -10,6 +10,7 @@ mod object_cleanup;
 mod operations;
 mod packages;
 mod portable;
+mod schedule;
 mod source_binding;
 mod system_proxy;
 

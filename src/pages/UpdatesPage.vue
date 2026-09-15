@@ -81,6 +81,14 @@ const detailOpen = ref(false)
 const policyOpen = ref(false)
 const policyMode = ref<'off' | 'notify' | 'auto'>('notify')
 const interval = ref(24)
+const scheduleMode = ref<'interval' | 'daily'>('interval')
+const dailyTime = ref('09:00')
+const policyBusy = ref(false)
+const policyError = ref('')
+const scheduleOptions = [
+  { value: 'interval', label: '按间隔' },
+  { value: 'daily', label: '每天固定时间' },
+]
 const busyId = ref('')
 const applying = ref(false)
 const stopRequested = ref(false)
@@ -357,15 +365,38 @@ function editPolicy(source: Source) {
   detail.value = source
   policyMode.value = source.policy.mode
   interval.value = source.policy.intervalHours
+  scheduleMode.value = source.policy.dailyTime ? 'daily' : 'interval'
+  dailyTime.value = source.policy.dailyTime || '09:00'
+  policyError.value = ''
   policyOpen.value = true
 }
 async function savePolicy() {
-  if (!detail.value) return
-  const ok = await app.mutate(
-    () => api.setPolicy(detail.value!.id, policyMode.value, interval.value),
-    '来源更新策略已保存',
-  )
-  if (ok) policyOpen.value = false
+  if (!detail.value || policyBusy.value) return
+  if (scheduleMode.value === 'daily' && !/^([01]\d|2[0-3]):[0-5]\d$/.test(dailyTime.value)) {
+    policyError.value = '请选择每天执行的时间'
+    return
+  }
+  const sourceId = detail.value.id
+  policyBusy.value = true
+  policyError.value = ''
+  try {
+    const ok = await app.mutate(
+      () =>
+        api.setPolicy(
+          sourceId,
+          policyMode.value,
+          interval.value,
+          scheduleMode.value === 'daily' ? dailyTime.value : undefined,
+        ),
+      '来源更新计划已保存',
+    )
+    if (ok) {
+      detail.value = app.snapshot?.sources.find((source) => source.id === sourceId) || null
+      policyOpen.value = false
+    } else policyError.value = app.error
+  } finally {
+    policyBusy.value = false
+  }
 }
 
 const policyModeOptions = [
@@ -654,9 +685,19 @@ const intervalOptions = [
                       ? '自动更新'
                       : '仅提醒'
                 }}
-                · {{ source.policy.intervalHours }}h
+                ·
+                {{
+                  source.policy.dailyTime
+                    ? `每天 ${source.policy.dailyTime}`
+                    : `每 ${source.policy.intervalHours} 小时`
+                }}
               </td>
-              <td>{{ formatDate(source.lastChecked) }}</td>
+              <td>
+                {{ formatDate(source.lastChecked) }}
+                <div v-if="source.policy.mode !== 'off' && source.nextCheck" class="item-desc">
+                  下次：{{ formatDate(source.nextCheck) }}
+                </div>
+              </td>
               <td>
                 <Badge v-if="busyId === source.id">{{ applying ? '更新中' : '检查中' }}</Badge>
                 <Badge v-else :tone="statusInfo(source.status)[1]">{{
@@ -686,7 +727,7 @@ const intervalOptions = [
                     size="sm"
                     :disabled="!source.updateState.canCheck || checkingAll || !!busyId"
                     @click="editPolicy(source)"
-                    >设置</Button
+                    >设置时间</Button
                   >
                 </div>
               </td>
@@ -807,7 +848,14 @@ const intervalOptions = [
         <div class="detail-row">
           <dt>更新策略</dt>
           <dd v-if="detail?.kind === 'local_reference'">跟随本地内容，无定时任务</dd>
-          <dd v-else>{{ detail?.policy.mode }} · 每 {{ detail?.policy.intervalHours }} 小时</dd>
+          <dd v-else>
+            {{ policyModeOptions.find((option) => option.value === detail?.policy.mode)?.label }} ·
+            {{
+              detail?.policy.dailyTime
+                ? `每天 ${detail.policy.dailyTime}`
+                : `每 ${detail?.policy.intervalHours} 小时`
+            }}
+          </dd>
         </div>
         <div class="detail-row">
           <dt>下次检查</dt>
@@ -878,29 +926,65 @@ const intervalOptions = [
     />
     <AppDialog
       v-model:open="policyOpen"
-      title="来源更新策略"
-      description="来源整体暂停时，其成员的继承策略也会暂停。"
+      title="来源更新计划"
+      :description="`${detail ? app.sourceName(detail) : ''} · 按本机时区执行，关闭策略后停止定时检查。`"
       ><div class="form-grid">
         <label class="field"
           ><span class="field-label">策略</span
-          ><AppSelect v-model="policyMode" aria-label="策略" :options="policyModeOptions" /></label
-        ><label class="field"
+          ><AppSelect
+            v-model="policyMode"
+            aria-label="策略"
+            :options="policyModeOptions"
+            :disabled="policyBusy" /></label
+        ><label class="field">
+          <span class="field-label">执行方式</span>
+          <AppSelect
+            v-model="scheduleMode"
+            aria-label="执行方式"
+            :options="scheduleOptions"
+            :disabled="policyBusy || policyMode === 'off'"
+          /> </label
+        ><label v-if="scheduleMode === 'daily'" class="field">
+          <span class="field-label">每天执行时间（本机时区）</span>
+          <input
+            v-model="dailyTime"
+            type="time"
+            step="60"
+            class="input"
+            aria-label="每天执行时间"
+            :disabled="policyBusy || policyMode === 'off'"
+          /> </label
+        ><label v-else class="field"
           ><span class="field-label">检查间隔（小时）</span
-          ><AppSelect v-model="interval" aria-label="检查间隔（小时）" :options="intervalOptions"
+          ><AppSelect
+            v-model="interval"
+            aria-label="检查间隔（小时）"
+            :options="intervalOptions"
+            :disabled="policyBusy || policyMode === 'off'"
         /></label>
       </div>
+      <p v-if="policyError" role="alert" class="policy-error">{{ policyError }}</p>
+      <p class="subtle" style="margin-top: 12px">
+        完全退出应用后停止检查；重新打开后补检查已到期的计划。
+      </p>
       <div class="callout" style="margin-top: 12px">
         自动更新只收集到中央库；目标是否同步由各分发关系的“跟随更新”决定。
       </div>
       <template #footer
-        ><Button @click="policyOpen = false">取消</Button
-        ><Button variant="primary" @click="savePolicy">保存</Button></template
+        ><Button :disabled="policyBusy" @click="policyOpen = false">取消</Button
+        ><Button variant="primary" :disabled="policyBusy" @click="savePolicy">{{
+          policyBusy ? '保存中…' : '保存'
+        }}</Button></template
       ></AppDialog
     >
   </div>
 </template>
 
 <style scoped>
+.policy-error {
+  color: var(--danger, #c53030);
+  margin-top: 12px;
+}
 .update-skill-member {
   margin-top: 8px;
   font-size: 13px;

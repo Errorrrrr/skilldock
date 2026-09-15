@@ -407,10 +407,11 @@ export const api = {
     sourceId: string,
     mode: 'off' | 'notify' | 'auto',
     intervalHours: number,
+    dailyTime?: string,
   ): Promise<Snapshot> =>
     isNative
-      ? native('set_policy', { sourceId, mode, intervalHours })
-      : demo.demoSetPolicy(sourceId, mode, intervalHours),
+      ? native('set_policy', { sourceId, mode, intervalHours, dailyTime })
+      : demo.demoSetPolicy(sourceId, mode, intervalHours, dailyTime),
   checkSource: (sourceId: string, apply: boolean): Promise<Snapshot> =>
     isNative ? native('check_source', { sourceId, apply }) : demo.demoCheckSource(sourceId, apply),
   setFollow: (bindingId: string, follow: boolean): Promise<Snapshot> =>

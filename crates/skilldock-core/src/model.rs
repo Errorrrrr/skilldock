@@ -7,12 +7,16 @@ pub struct Policy {
     #[ts(type = "'off' | 'notify' | 'auto'")]
     pub mode: String,
     pub interval_hours: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub daily_time: Option<String>,
 }
 impl Default for Policy {
     fn default() -> Self {
         Self {
             mode: "off".into(),
             interval_hours: 24,
+            daily_time: None,
         }
     }
 }
