@@ -16,6 +16,14 @@ use tokio::task::JoinSet;
 use uuid::Uuid;
 use zip::ZipArchive;
 
+pub use crate::system_proxy::ResolvedProxy;
+
+/// Share configured routing rules with the desktop app updater.
+pub async fn resolve_proxy(proxy: &crate::model::NetworkProxy) -> Result<ResolvedProxy> {
+    validate_proxy(proxy)?;
+    crate::system_proxy::resolve(proxy).await
+}
+
 const CLAWHUB_SITE: &str = "https://clawhub.ai";
 const USER_AGENT: &str = concat!("SkillDock/", env!("CARGO_PKG_VERSION"));
 const SEARCH_LIMIT: usize = 50;

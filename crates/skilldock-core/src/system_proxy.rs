@@ -6,7 +6,7 @@ use std::{collections::BTreeMap, process::Stdio, time::Duration};
 use tokio::process::Command;
 
 #[derive(Default)]
-pub(crate) struct ResolvedProxy {
+pub struct ResolvedProxy {
     pub http: String,
     pub https: String,
     pub bypass: String,

@@ -9,6 +9,7 @@ import type {
   PresetPackage,
 } from './types'
 import * as demo from './demo'
+import { version as appVersion } from '../../package.json'
 
 export const isNative = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
@@ -24,6 +25,32 @@ async function native<T>(action: string, args: Record<string, unknown> = {}): Pr
           : '原生服务调用失败',
     )
   }
+}
+
+export interface AppUpdateResult {
+  configured: boolean
+  available: boolean
+  currentVersion: string
+  endpoint: string
+  custom: boolean
+  message: string
+  version?: string
+  notes?: string
+  token?: string
+}
+export interface AppUpdateProgress {
+  token: string
+  phase: 'downloading' | 'verifying' | 'installing' | 'restarting'
+  downloaded: number
+  total: number | null
+}
+const demoAppUpdate: AppUpdateResult = {
+  configured: false,
+  available: false,
+  currentVersion: appVersion,
+  endpoint: 'https://github.com/Errorrrrr/skilldock/releases/latest/download/latest.json',
+  custom: false,
+  message: '浏览器演示不检查或安装应用更新，请在桌面应用中操作',
 }
 
 export interface BackupEntry {
@@ -406,18 +433,19 @@ export const api = {
     isNative ? native('import_preset', { path }) : demo.demoImportPreset(),
   rollback: (bindingId: string, digest: string): Promise<Snapshot> =>
     isNative ? native('rollback', { bindingId, digest }) : demo.demoRollback(bindingId, digest),
-  checkAppUpdate: (): Promise<{
-    configured: boolean
-    available: boolean
-    version?: string
-    message: string
-  }> => (isNative ? native('check_app_update') : demo.demoCheckAppUpdate()),
-  installAppUpdate: (): Promise<{
-    configured: boolean
-    available: boolean
-    version?: string
-    message: string
-  }> => native('install_app_update', { allowRestart: true }),
+  appUpdateInfo: (): Promise<AppUpdateResult> =>
+    isNative ? native('app_update_info') : Promise.resolve({ ...demoAppUpdate }),
+  checkAppUpdate: (): Promise<AppUpdateResult> =>
+    isNative ? native('check_app_update') : Promise.resolve({ ...demoAppUpdate }),
+  installAppUpdate: (token: string): Promise<void> =>
+    isNative
+      ? native('install_app_update', { allowRestart: true, token })
+      : Promise.reject(new Error('浏览器演示无法安装应用更新')),
+  async onAppUpdateProgress(callback: (progress: AppUpdateProgress) => void): Promise<() => void> {
+    if (!isNative) return () => {}
+    const { listen } = await import('@tauri-apps/api/event')
+    return listen<AppUpdateProgress>('skilldock:app-update', (event) => callback(event.payload))
+  },
   async pickDirectory(defaultPath?: string) {
     if (!isNative) return defaultPath || '/Users/demo/SkillDock'
     const { open } = await import('@tauri-apps/plugin-dialog')

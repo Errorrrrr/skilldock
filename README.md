@@ -35,7 +35,7 @@ macOS 本地验证包：`target/debug/bundle/macos/SkillDock.app`。CLI：`targe
 - 按来源定时检查或更新，按分发关系选择固定版本/跟随，保留历史快照供回滚。
 - 统一目录可恢复迁移、文件事务日志、中断恢复、跨进程文件锁、内容摘要与路径边界检查。
 - macOS 状态栏/系统托盘、关闭窗口后常驻、完全退出、开机启动、主题、来源变化通知。
-- 独立应用更新入口，只有配置 HTTPS 升级地址与签名公钥后启用。
+- 独立应用更新入口，正式发布构建内置 GitHub 更新源与签名公钥，支持版本说明、下载进度和失败重试。
 
 ## 恢复与永久清理
 
@@ -89,7 +89,7 @@ skilldock exec '{"action":"retry_object_cleanup","taskId":"TASK_ID"}'
 
 ## 网络代理
 
-在「设置 → 网络代理」选择跟随系统代理（默认）、直连或自定义 HTTP/HTTPS 代理。例如 `http://127.0.0.1:7897`。测试连接分别检查 GitHub HTTP 与 Git，不保存草稿；点击保存设置后，新发起的 Git、网站搜索、下载和 Skill 来源更新使用该配置。不会修改全局 Git 或系统代理，应用自身升级不在此配置范围内。暂不支持代理账号密码和 SOCKS 地址。系统模式读取 macOS 网络代理、Windows 当前用户 Internet Settings 或 Linux GNOME gsettings 的固定代理及绕过列表；PAC/自动发现会提示改用自定义。旧 inherit 配置按 system 处理，不再读取终端代理环境。Windows/Linux 尚未进行真机验证。
+在「设置 → 网络代理」选择跟随系统代理（默认）、直连或自定义 HTTP/HTTPS 代理。例如 `http://127.0.0.1:7897`。测试连接分别检查 GitHub HTTP 与 Git，不保存草稿；点击保存设置后，新发起的 Git、网站搜索、下载和 Skill 来源更新使用该配置。不会修改全局 Git 或系统代理，应用自身升级也使用该配置。暂不支持代理账号密码和 SOCKS 地址。系统模式读取 macOS 网络代理、Windows 当前用户 Internet Settings 或 Linux GNOME gsettings 的固定代理及绕过列表；PAC/自动发现会提示改用自定义。旧 inherit 配置按 system 处理，不再读取终端代理环境。Windows/Linux 尚未进行真机验证。
 
 ## CLI 示例
 
@@ -214,3 +214,12 @@ Skill 库按名称汇总展示安装记录，工具分发列合并各来源成�
 同名 Skill 从 Git 或本地重新导入后，可以通过 Skill 库的「选择来源分发」，或对应预设／本地来源的分发入口，预览并确认切换。预览展示旧、新来源、实体路径、版本、内容差异状态与现有引用；确认选项默认关闭。
 
 旧安装仍被其他预设或本地来源引用时会阻止切换，并列出需要先解除的引用。确认后只改变所选目标的链接，旧实体、归集备份和其他工具保持原样。详见 [分发来源切换](docs/specs/distribution-source-switch.md)。
+
+
+## 应用版本发布与更新
+
+应用默认检查本仓库 GitHub Releases 的 `latest.json`。正式发布时，流水线将签名公钥内置到安装包，用户无需填写更新配置；本地未配置公钥的开发构建会明确提示无法在线升级。浏览器演示不会模拟可安装的新版本。
+
+推送正式版本标签（例如 `v0.2.0`）触发 `.github/workflows/release.yml`：版本校验 → 草稿 Release → macOS Apple Silicon/Intel、Windows x64、Linux x64 构建 → 实际更新包签名校验 → 完整清单校验 → 发布。全部构建成功前不会进入用户更新渠道。
+
+首次使用需由仓库维护者配置更新签名密钥和公钥，详见 [应用发布与更新](docs/app-release.md)。私有仓库需单独提供可访问的发布渠道，此默认流水线面向公开仓库。macOS 签名与公证凭据独立于更新包签名。

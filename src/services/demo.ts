@@ -760,14 +760,6 @@ export async function demoRollback(bindingId: string, digest: string) {
   task('rollback', '回滚分发版本', binding.path)
   return save(state)
 }
-export async function demoCheckAppUpdate() {
-  return {
-    configured: true,
-    available: true,
-    version: '0.2.0',
-    message: '新版本已就绪，可在空闲时安装',
-  }
-}
 
 export async function demoScanMany(paths: string[]): Promise<ScanResult> {
   const results = await Promise.all(

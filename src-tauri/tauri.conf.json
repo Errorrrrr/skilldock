@@ -42,7 +42,10 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": ""
+      "pubkey": "",
+      "endpoints": [
+        "https://github.com/Errorrrrr/skilldock/releases/latest/download/latest.json"
+      ]
     }
   }
 }

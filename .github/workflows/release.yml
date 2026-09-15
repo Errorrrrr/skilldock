@@ -1,0 +1,148 @@
+name: Release SkillDock
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: skilldock-release
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.release.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node scripts/release.mjs prepare
+        env:
+          SKILLDOCK_UPDATER_PUBLIC_KEY: ${{ vars.SKILLDOCK_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      - name: Create or resume draft release
+        id: release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (context.payload.repository.private) throw new Error('官方更新源要求公开的 Release 下载地址；私有仓库需先配置独立发布渠道。');
+            const tag = process.env.GITHUB_REF_NAME;
+            const repo = context.repo;
+            try {
+              const { data: existing } = await github.rest.repos.getReleaseByTag({ ...repo, tag });
+              if (!existing.draft) throw new Error('This version is already published. Use a new version tag.');
+              return existing.id;
+            } catch (error) { if (error.status !== 404) throw error; }
+            const { data } = await github.rest.repos.createRelease({
+              ...repo, tag_name: tag, name: `SkillDock ${tag}`, draft: true,
+              prerelease: false, generate_release_notes: true,
+            });
+            return data.id;
+  build:
+    needs: prepare
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      # Serialize latest.json merges so no platform can overwrite another's entry.
+      max-parallel: 1
+      matrix:
+        include:
+          - runner: macos-latest
+            target: aarch64-apple-darwin
+            bundles: app,dmg
+          - runner: macos-latest
+            target: x86_64-apple-darwin
+            bundles: app,dmg
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage,deb
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/release.mjs prepare
+        env:
+          SKILLDOCK_UPDATER_PUBLIC_KEY: ${{ vars.SKILLDOCK_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      - name: Validate release logic
+        run: node --test tests/release.test.mjs
+      - name: Test updater guards
+        run: cargo test --locked -p skilldock-desktop app_updates::tests
+      - name: Build and upload to draft
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          releaseId: ${{ needs.prepare.outputs.release_id }}
+          tagName: ${{ github.ref_name }}
+          releaseDraft: true
+          prerelease: false
+          uploadUpdaterJson: true
+          uploadUpdaterSignatures: true
+          updaterJsonPreferNsis: true
+          tauriScript: pnpm tauri
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} -- --locked
+      - name: Verify artifacts against embedded public key
+        run: node scripts/release.mjs verify-local ${{ matrix.target }}
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Download and validate release manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+          RELEASE_INFO_FILE: /tmp/release-info.json
+          RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
+        run: |
+          gh release download "$TAG" --repo "$REPO" --pattern latest.json --dir /tmp/skilldock-release
+          gh api "repos/$REPO/releases/$RELEASE_ID" > /tmp/release-info.json
+          node scripts/release.mjs finalize-manifest /tmp/skilldock-release/latest.json
+          gh release upload "$TAG" /tmp/skilldock-release/latest.json --repo "$REPO" --clobber
+      - name: Publish complete release
+        uses: actions/github-script@v7
+        env:
+          RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              ...context.repo, release_id: Number(process.env.RELEASE_ID),
+              draft: false, make_latest: 'legacy',
+            });

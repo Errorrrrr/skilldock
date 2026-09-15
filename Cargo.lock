@@ -3928,9 +3928,12 @@ dependencies = [
 name = "skilldock-desktop"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "block2",
+ "minisign-verify",
  "objc2",
  "objc2-app-kit",
+ "reqwest 0.13.4",
  "serde_json",
  "skilldock-core",
  "tauri",

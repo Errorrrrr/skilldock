@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod app_updates;
 mod directories;
 #[cfg(target_os = "macos")]
 mod tray_outside;
@@ -15,13 +16,14 @@ use tauri::{
     tray::{MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 use tauri_plugin_notification::NotificationExt;
-use tauri_plugin_updater::UpdaterExt;
 
 struct Runtime {
     engine: Engine,
     paused: Arc<AtomicBool>,
     tray_available: bool,
     active: Arc<AtomicBool>,
+    app_updates: app_updates::AppUpdates,
+    restarting: AtomicBool,
 }
 
 #[tauri::command]
@@ -31,53 +33,11 @@ async fn execute(
     state: tauri::State<'_, Runtime>,
 ) -> Result<Value, String> {
     let action = request.get("action").and_then(Value::as_str).unwrap_or("");
-    if action == "check_app_update" || action == "install_app_update" {
-        let snapshot = state.engine.snapshot().map_err(|e| e.to_string())?;
-        if snapshot.settings.update_endpoint.is_empty()
-            || snapshot.settings.update_public_key.is_empty()
-        {
-            return Ok(
-                json!({"configured":false,"available":false,"message":"尚未配置签名发布源；开发版本不能自动升级"}),
-            );
-        }
-        let endpoint = snapshot
-            .settings
-            .update_endpoint
-            .parse()
-            .map_err(|e| format!("升级地址无效：{e}"))?;
-        let updater = app
-            .updater_builder()
-            .pubkey(snapshot.settings.update_public_key)
-            .endpoints(vec![endpoint])
-            .map_err(|e| e.to_string())?
-            .build()
-            .map_err(|e| e.to_string())?;
-        let update = updater.check().await.map_err(|e| e.to_string())?;
-        if let Some(update) = update {
-            if action == "install_app_update" {
-                if request.get("allowRestart").and_then(Value::as_bool) != Some(true) {
-                    return Err("请保存所有编辑，并明确确认安装重启".into());
-                }
-                if state.active.load(Ordering::SeqCst) {
-                    return Err("正在执行任务，请稍后安装更新".into());
-                }
-                let _guard = state.engine.update_guard().map_err(|e| e.to_string())?;
-                if snapshot.tasks.iter().any(|t| t.status == "needsRecovery") {
-                    return Err("请先恢复文件事务".into());
-                }
-                state.paused.store(true, Ordering::SeqCst);
-                if let Err(e) = update.download_and_install(|_, _| {}, || {}).await {
-                    state.paused.store(false, Ordering::SeqCst);
-                    return Err(e.to_string());
-                }
-                app.restart();
-            }
-            Ok(
-                json!({"configured":true,"available":true,"version":update.version,"message":"发现可用更新"}),
-            )
-        } else {
-            Ok(json!({"configured":true,"available":false,"message":"已是最新版本"}))
-        }
+    if matches!(
+        action,
+        "app_update_info" | "check_app_update" | "install_app_update"
+    ) {
+        app_updates::execute(&request, &app, &state).await
     } else {
         let engine = state.engine.clone();
         let handle = tokio::runtime::Handle::current();
@@ -125,6 +85,9 @@ async fn tray_action(
             .map_err(|e| e.to_string())?;
         }
         "pause" => {
+            if state.app_updates.installing.load(Ordering::SeqCst) {
+                return Err("正在安装应用更新，请稍后调整定时任务".into());
+            }
             let previous = state.paused.fetch_xor(true, Ordering::SeqCst);
             let _ = app.emit("skilldock:scheduler", json!({"paused": !previous}));
         }
@@ -246,6 +209,8 @@ fn main() {
                 paused: paused.clone(),
                 tray_available,
                 active: active.clone(),
+                app_updates: app_updates::AppUpdates::default(),
+                restarting: AtomicBool::new(false),
             });
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -344,7 +309,9 @@ fn main() {
             }
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 let rt = app.state::<Runtime>();
-                if rt.active.load(Ordering::SeqCst) || rt.engine.update_guard().is_err() {
+                if !rt.restarting.load(Ordering::SeqCst)
+                    && (rt.active.load(Ordering::SeqCst) || rt.engine.update_guard().is_err())
+                {
                     api.prevent_exit();
                     show(app);
                 }

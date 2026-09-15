@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import AppUpdatePanel from '@/components/AppUpdatePanel.vue'
+import { useAppUpdater } from '@/composables/useAppUpdater'
 import AgentDirectories from '@/components/AgentDirectories.vue'
 import { cloneAgentProfiles } from '@/services/agentProfiles'
 import AppSelect from '@/components/ui/AppSelect.vue'
@@ -10,9 +12,7 @@ import {
   Globe2,
   RefreshCcw,
   Palette,
-  AppWindow,
   FolderOpen,
-  Download,
   ShieldCheck,
   ExternalLink,
 } from 'lucide-vue-next'
@@ -34,12 +34,7 @@ const migrateOpen = ref(false)
 const migrateConfirm = ref(false)
 const newPath = ref('')
 const busy = ref(false)
-const appUpdate = ref<{
-  configured: boolean
-  available: boolean
-  version?: string
-  message: string
-} | null>(null)
+const { busy: appUpdateBusy } = useAppUpdater()
 const catalogSites = ref<CatalogSite[]>(normalizeCatalogSites(defaultCatalogSites))
 const siteError = ref('')
 const proxyMode = ref('system')
@@ -66,7 +61,6 @@ async function testProxy() {
 }
 const agentProfiles = ref(cloneAgentProfiles())
 const autoStart = ref(false)
-const restartConfirm = ref(false)
 const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone
 const closeToTray = ref(true)
 const theme = ref('light')
@@ -91,8 +85,9 @@ watch(
     closeToTray.value = s.closeToTray
     theme.value = s.theme
     updateMode.value = s.updateMode
-    endpoint.value = s.updateEndpoint
-    publicKey.value = s.updatePublicKey
+    if (!previous || s.updateEndpoint !== previous.updateEndpoint) endpoint.value = s.updateEndpoint
+    if (!previous || s.updatePublicKey !== previous.updatePublicKey)
+      publicKey.value = s.updatePublicKey
   },
   { immediate: true },
 )
@@ -121,6 +116,12 @@ async function toggleAutoStart() {
   }
 }
 async function saveSettings() {
+  if (appUpdateBusy.value) return
+  if (!!endpoint.value.trim() !== !!publicKey.value.trim()) {
+    app.error = '请同时填写自定义更新地址和公钥，或同时清空以使用官方源'
+    section.value = 'app'
+    return
+  }
   siteError.value = ''
   for (const profile of agentProfiles.value) {
     for (const paths of [profile.userPaths, profile.projectPaths]) {
@@ -198,25 +199,6 @@ async function migrate() {
     migrateOpen.value = false
   }
 }
-async function checkApp() {
-  try {
-    appUpdate.value = await api.checkAppUpdate()
-  } catch (e) {
-    app.error = e instanceof Error ? e.message : '无法检查应用更新'
-  }
-}
-async function installApp() {
-  if (!app.isNative) {
-    app.error = '浏览器演示无法安装桌面应用更新，请在 Tauri 原生环境中执行'
-    return
-  }
-  try {
-    appUpdate.value = await api.installAppUpdate()
-  } catch (e) {
-    app.error = e instanceof Error ? e.message : '安装应用更新失败'
-  }
-}
-
 const updateModeOptions = [
   { value: 'off', label: '关闭' },
   { value: 'notify', label: '仅检查提醒' },
@@ -236,7 +218,7 @@ const themeOptions = [
         <h1 class="page-title">设置</h1>
         <p class="page-subtitle">配置存储、来源、更新与桌面应用行为。</p>
       </div>
-      <Button variant="primary" @click="saveSettings">保存设置</Button>
+      <Button variant="primary" :disabled="appUpdateBusy" @click="saveSettings">保存设置</Button>
     </header>
     <div class="settings-layout">
       <nav class="panel settings-nav">
@@ -408,45 +390,11 @@ const themeOptions = [
             检查间隔可在更新中心按来源设置。完全退出应用后，定时检查停止。
           </div></template
         >
-        <template v-else-if="section === 'app'"
-          ><div class="panel-header" style="padding: 0 0 13px">
-            <h3 class="panel-title">
-              <AppWindow style="width: 16px; display: inline; vertical-align: -3px" /> 应用更新
-            </h3>
-          </div>
-          <div class="settings-row">
-            <div>
-              <h4>SkillDock 0.1.0</h4>
-              <p>应用升级与 Skill 内容更新相互独立。</p>
-            </div>
-            <Button @click="checkApp"><RefreshCcw />检查更新</Button>
-          </div>
-          <div v-if="appUpdate" class="callout" :class="{ warning: !appUpdate.configured }">
-            {{ appUpdate.message }}
-            <Button
-              v-if="appUpdate.available"
-              size="sm"
-              variant="primary"
-              style="margin-left: 8px"
-              @click="restartConfirm = true"
-              ><Download />安装并重启 {{ appUpdate.version }}</Button
-            >
-          </div>
-          <div class="settings-row">
-            <div>
-              <h4>自定义更新端点</h4>
-              <p>配置签名升级服务的 HTTPS 地址与验证公钥。留空时不启用应用升级。</p>
-            </div>
-          </div>
-          <div class="form-grid">
-            <label class="field"
-              ><span class="field-label">更新端点</span
-              ><input v-model="endpoint" class="input" placeholder="https://..." /></label
-            ><label class="field"
-              ><span class="field-label">更新公钥</span
-              ><input v-model="publicKey" class="input" placeholder="发布服务提供的签名公钥"
-            /></label></div
-        ></template>
+        <AppUpdatePanel
+          v-else-if="section === 'app'"
+          v-model:endpoint="endpoint"
+          v-model:public-key="publicKey"
+        />
         <template v-else
           ><div class="panel-header" style="padding: 0 0 13px">
             <h3 class="panel-title">
@@ -541,13 +489,6 @@ const themeOptions = [
       confirm-text="开始迁移"
       :busy="busy"
       @confirm="migrate"
-    />
-    <ConfirmDialog
-      v-model:open="restartConfirm"
-      title="安装应用更新并重启"
-      description="请保存当前编辑。安装完成后 SkillDock 将重新启动。"
-      confirm-text="安装并重启"
-      @confirm="installApp"
     />
   </div>
 </template>
