@@ -1,6 +1,12 @@
 # SkillDock
 
-统一管理 Agent Skill 的跨平台桌面应用与独立 CLI。当前版本 `0.1.0`，已在 macOS Apple Silicon 完成编译、原生界面及真实文件操作验证。
+统一管理 Agent Skill 的跨平台桌面应用与独立 CLI。当前版本 `0.2.1`。项目已在 macOS Apple Silicon 验证原生界面和真实文件操作；Windows/Linux 的安装与真实桌面操作仍需平台验收。
+
+## 下载与更新
+
+在 [GitHub Releases](https://github.com/Errorrrrr/skilldock/releases/latest) 下载对应系统的安装包。首次使用请手动安装；后续在「设置 → 应用更新」检查版本并确认安装。
+
+正式安装包内置更新公钥，并校验每次更新的签名。macOS 使用 ad-hoc 包签名，尚未进行 Apple 公证；Windows 尚未配置系统代码签名。开发构建没有正式更新公钥，不能直接在线升级。发布配置见 [应用发布与更新](docs/app-release.md)。
 
 ## 启动
 
