@@ -16,5 +16,17 @@ if (check.error || check.status !== 0) {
   process.exit(1)
 }
 
+// Unconfigured optional CI credentials must behave like absent environment variables.
+for (const key of [
+  'APPLE_CERTIFICATE',
+  'APPLE_CERTIFICATE_PASSWORD',
+  'APPLE_SIGNING_IDENTITY',
+  'APPLE_ID',
+  'APPLE_PASSWORD',
+  'APPLE_TEAM_ID',
+]) {
+  if (process.env[key] === '') delete process.env[key]
+}
+
 // Run in this process so Ctrl+C retains the Tauri CLI's normal cleanup behavior.
 await import('@tauri-apps/cli/tauri.js')
