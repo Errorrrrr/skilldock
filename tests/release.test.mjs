@@ -73,7 +73,7 @@ test('finalization maps v1 action API asset URLs to public URLs and copies relea
       name: `${p}.zip`,
       size: 100,
       url: `https://api.github.com/repos/Errorrrrr/skilldock/releases/assets/${i}`,
-      browser_download_url: `https://github.com/Errorrrrr/skilldock/releases/download/v1.2.3/${p}.zip`,
+      browser_download_url: `https://github.com/Errorrrrr/skilldock/releases/download/untagged-draft123/${p}.zip`,
     },
     { name: `${p}.zip.sig`, size: 100 },
   ])
@@ -91,7 +91,18 @@ test('finalization maps v1 action API asset URLs to public URLs and copies relea
     'Errorrrrr/skilldock',
   )
   assert.equal(result.notes, '发布说明')
-  assert.ok(result.platforms['darwin-aarch64'].url.startsWith('https://github.com/'))
+  assert.equal(
+    result.platforms['darwin-aarch64'].url,
+    'https://github.com/Errorrrrr/skilldock/releases/download/v1.2.3/darwin-aarch64.zip',
+  )
+  const draftUrls = structuredClone(manifest)
+  platforms.forEach((p, i) => {
+    draftUrls.platforms[p].url = assets[i * 2].browser_download_url
+  })
+  assert.deepEqual(
+    finalizeManifest(draftUrls, release, '1.2.3', 'Errorrrrr/skilldock').platforms,
+    result.platforms,
+  )
   assert.throws(() =>
     finalizeManifest(
       structuredClone(manifest),

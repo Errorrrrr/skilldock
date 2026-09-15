@@ -62,7 +62,8 @@ export function finalizeManifest(manifest, release, version, repo) {
   for (const item of Object.values(manifest.platforms || {})) {
     const asset = assets.find((a) => a.url === item.url || a.browser_download_url === item.url)
     if (!asset) throw new Error('更新清单引用了不属于当前 Release 的附件')
-    item.url = asset.browser_download_url
+    // Draft assets use an untagged-* URL; publication changes it to the version tag.
+    item.url = `https://github.com/${repo}/releases/download/v${version}/${encodeURIComponent(asset.name)}`
   }
   manifest.notes = release.body || ''
   manifest.pub_date = new Date().toISOString()
