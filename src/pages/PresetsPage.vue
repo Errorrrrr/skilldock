@@ -162,9 +162,18 @@ async function remove() {
     detailOpen.value = false
   }
 }
+const importingPreset = ref(false)
+
 async function importPreset() {
-  const path = await api.pickFile()
-  if (path) await app.mutate(() => api.importPreset(path), '预设已导入')
+  if (importingPreset.value) return
+  importingPreset.value = true
+  try {
+    const path = await api.pickFile()
+    if (!path) return
+    await app.mutate(() => api.importPreset(path), '预设已导入')
+  } finally {
+    importingPreset.value = false
+  }
 }
 async function exportPreset() {
   if (!currentPreset.value) return
@@ -205,7 +214,10 @@ function applyFromCard(preset: Preset) {
         <p class="page-subtitle">组合常用 Skill，一次分发到多个工具。</p>
       </div>
       <div class="actions">
-        <Button @click="importPreset"><Upload />导入预设</Button
+        <Button :disabled="importingPreset" :loading="importingPreset" @click="importPreset"
+          ><Upload v-if="!importingPreset" />{{
+            importingPreset ? '正在导入…' : '导入预设'
+          }}</Button
         ><Button variant="primary" @click="create"><Plus />新建预设</Button>
       </div>
     </header>

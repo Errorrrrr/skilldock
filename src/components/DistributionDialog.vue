@@ -10,6 +10,7 @@ import AppSelect from './ui/AppSelect.vue'
 import { api } from '@/services/api'
 import { useAppStore } from '@/stores/app'
 import type { DistributionPlan } from '@/services/types'
+import { skillDistributionChoices, skillEntityLabel } from '@/services/librarySkills'
 
 const props = withDefaults(
   defineProps<{
@@ -40,16 +41,34 @@ const selectedSkills = computed(
   () => app.snapshot?.skills.filter((skill) => selectedIds.value.includes(skill.id)) ?? [],
 )
 
+const entityLabels = computed(() =>
+  Object.fromEntries(
+    selectedSkills.value.map((skill) => [
+      skill.id,
+      app.snapshot ? skillEntityLabel(skill, app.snapshot) : '实体位置未确认',
+    ]),
+  ),
+)
+
 const sourceChoices = computed(() =>
   Object.fromEntries(
     selectedSkills.value.map((skill) => [
       skill.id,
-      app.snapshot?.skills
-        .filter((other) => other.name.toLocaleLowerCase() === skill.name.toLocaleLowerCase())
-        .map((other) => ({
-          value: other.id,
-          label: `${sourceName(other.id)} · ${other.version}`,
-        })) ?? [],
+      (app.snapshot
+        ? skillDistributionChoices(
+            [
+              skill,
+              ...app.snapshot.skills.filter(
+                (other) => other.name.toLocaleLowerCase() === skill.name.toLocaleLowerCase(),
+              ),
+            ],
+            app.snapshot,
+          )
+        : []
+      ).map((other) => ({
+        value: other.id,
+        label: `${sourceName(other.id)} · ${skillEntityLabel(other, app.snapshot!)}`,
+      })),
     ]),
   ),
 )
@@ -221,7 +240,7 @@ async function submit() {
             <div class="item-icon"><Link2 /></div>
             <div class="choice-main">
               <div class="choice-title">{{ skill.name }}</div>
-              <div class="choice-meta">{{ sourceName(skill.id) }} · {{ skill.version }}</div>
+              <div class="choice-meta">当前实体：{{ entityLabels[skill.id] }}</div>
               <AppSelect
                 v-if="claim === 'manual' && (sourceChoices[skill.id]?.length ?? 0) > 1"
                 :model-value="skill.id"
@@ -283,14 +302,18 @@ async function submit() {
               <div class="source-panel">
                 <span class="source-caption">当前来源</span>
                 <strong>{{ item.previousSource }}</strong>
-                <span class="source-version">{{ item.replacement.version }}</span>
-                <p class="source-path mono">{{ item.replacement.entityPath }}</p>
+                <span class="source-version">分发记录版本：{{ item.replacement.version }}</span>
+                <p class="source-path mono">
+                  {{ item.replacement.entityPath }}
+                </p>
               </div>
               <div class="source-panel source-panel-next">
                 <span class="source-caption">切换到</span>
                 <strong>{{ item.sourceName }}</strong>
-                <span class="source-version">{{ item.replacement.nextVersion }}</span>
-                <p class="source-path mono">{{ item.replacement.nextEntityPath }}</p>
+                <span class="source-version">来源记录版本：{{ item.replacement.nextVersion }}</span>
+                <p class="source-path mono">
+                  {{ item.replacement.nextEntityPath }}
+                </p>
               </div>
             </div>
             <div class="plan-comparison-meta">

@@ -75,6 +75,7 @@ const detail = ref<Skill | null>(null)
 const detailOpen = ref(false)
 const distributeOpen = ref(false)
 const distributeIds = ref<string[]>([])
+const distributeTargetIds = ref<string[]>([])
 const addOpen = ref(false)
 const addMode = ref<'menu' | 'git' | 'folder'>('menu')
 const folderPath = ref(app.isNative ? '' : '/Users/demo/Downloads/skills')
@@ -243,15 +244,23 @@ function openDetail(skill: Skill) {
   detail.value = skill
   detailOpen.value = true
 }
-function openDistribute(ids: string[]) {
+function openDistribute(ids: string[], targetIds: string[] = []) {
+  distributeTargetIds.value = targetIds
   distributeIds.value = ids
   distributeOpen.value = true
+}
+function toggleDistribution(row: LibrarySkill, targetId: string) {
+  const tool = row.tools.find((tool) => tool.id === targetId)
+  if (!tool || tool.protected) return
+  if (!tool.active && row.needsSourceChoice) openDistribute([row.id], [targetId])
+  else void distribution.toggle(row.id, targetId)
 }
 function gitImported() {
   addOpen.value = false
   app.notice = 'Git 集合已同步'
 }
 async function importFolder() {
+  if (busy.value) return
   busy.value = true
   try {
     const result = await api.scan(folderPath.value)
@@ -594,7 +603,7 @@ const presetIdOptions = computed(() => [
                 class="library-copy-note"
                 :title="row.original.memberSummary"
               >
-                已汇总 {{ row.original.members.length }} 份来源
+                {{ row.original.sourceSummary }}
               </span>
             </div>
 
@@ -604,12 +613,20 @@ const presetIdOptions = computed(() => [
 
             <div class="library-card-dir" @click.stop>
               <SkillDirectoryActions :skill="row.original" :members="row.original.members" />
-              <Button
+              <span
                 v-if="row.original.members.length > 1"
+                class="library-copy-note"
+                style="display: block; margin-top: 4px"
+                :title="row.original.memberSummary"
+                >{{ row.original.sourceSummary }}</span
+              >
+              <Button
+                v-if="row.original.needsSourceChoice"
                 size="sm"
                 variant="ghost"
+                style="margin-top: 4px"
                 @click="openDistribute([row.original.id])"
-                >选择来源分发</Button
+                >选择实体分发（{{ row.original.entityCount }} 个候选）</Button
               >
             </div>
 
@@ -626,7 +643,7 @@ const presetIdOptions = computed(() => [
                     :aria-label="`${row.original.name} · ${tool.name} · ${tool.actionLabel}`"
                     :title="tool.hint"
                     :disabled="distributionBusy || app.loading || tool.protected"
-                    @click.stop="distribution.toggle(row.original.id, tool.id)"
+                    @click.stop="toggleDistribution(row.original, tool.id)"
                   >
                     <LockKeyhole v-if="tool.protected" />
                     <Check v-else-if="tool.active" />
@@ -744,14 +761,14 @@ const presetIdOptions = computed(() => [
                       v-if="row.original.members.length > 1"
                       class="library-copy-note"
                       :title="row.original.memberSummary"
-                      >已汇总 {{ row.original.members.length }} 份来源记录</span
+                      >{{ row.original.sourceSummary }}</span
                     >
                     <Button
-                      v-if="row.original.members.length > 1"
+                      v-if="row.original.needsSourceChoice"
                       size="sm"
                       variant="ghost"
                       @click.stop="openDistribute([row.original.id])"
-                      >选择来源分发</Button
+                      >选择实体分发</Button
                     >
                   </div>
                 </div>
@@ -767,7 +784,7 @@ const presetIdOptions = computed(() => [
                     :aria-label="`${row.original.name} · ${tool.name} · ${tool.actionLabel}`"
                     :title="tool.hint"
                     :disabled="distributionBusy || app.loading || tool.protected"
-                    @click="distribution.toggle(row.original.id, tool.id)"
+                    @click="toggleDistribution(row.original, tool.id)"
                   >
                     <LockKeyhole v-if="tool.protected" />
                     <Check v-else-if="tool.active" />
@@ -899,7 +916,11 @@ const presetIdOptions = computed(() => [
       v-model:open="detailOpen"
       :skill="detail"
       @distribute="openDistribute([$event])"
-    /><DistributionDialog v-model:open="distributeOpen" :skill-ids="distributeIds" />
+    /><DistributionDialog
+      v-model:open="distributeOpen"
+      :skill-ids="distributeIds"
+      :initial-target-ids="distributeTargetIds"
+    />
     <AppDialog
       v-model:open="addOpen"
       :fixed-layout="addMode === 'git'"
@@ -929,21 +950,23 @@ const presetIdOptions = computed(() => [
       <GitPackageImport v-else-if="addMode === 'git'" @imported="gitImported" />
       <div v-else>
         <label class="field"
-          ><span class="field-label">本地目录</span><DirectoryField v-model="folderPath"
+          ><span class="field-label">本地目录</span
+          ><DirectoryField v-model="folderPath" :disabled="busy"
         /></label>
         <div class="callout" style="margin-top: 12px">
           快速导入只处理无冲突项。如需替换原目录为软链，请使用完整归集向导。
         </div>
       </div>
       <template #footer
-        ><Button v-if="addMode !== 'menu'" @click="addMode = 'menu'">返回</Button
+        ><Button v-if="addMode !== 'menu'" :disabled="busy" @click="addMode = 'menu'">返回</Button
         ><Button v-else @click="addOpen = false">取消</Button
         ><Button
           v-if="addMode === 'folder'"
           variant="primary"
           :disabled="busy"
+          :loading="busy"
           @click="importFolder"
-          >扫描并导入</Button
+          >{{ busy ? '正在扫描并导入…' : '扫描并导入' }}</Button
         ></template
       ></AppDialog
     >

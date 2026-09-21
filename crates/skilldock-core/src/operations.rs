@@ -5,6 +5,93 @@ use crate::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
+// Re-adding a target restores only links whose exact snapshot and identity are known.
+// Names alone cannot identify a Skill, and external links retain their existing ownership.
+fn restore_target_bindings(
+    s: &mut Snapshot,
+    root: &Path,
+    target: &Target,
+    changes: &mut Vec<Change>,
+) -> Result<()> {
+    let mut candidates = s.skills.clone();
+    candidates.extend(s.presets.iter().flat_map(|p| p.locks.values()).cloned());
+    for binding in &s.bindings {
+        if let Some(skill) = s.skills.iter().find(|skill| skill.id == binding.skill_id) {
+            let mut version = skill.clone();
+            version.bundle_digest = binding.digest.clone();
+            version.relative_path = binding.relative_path.clone();
+            version.version = binding.version.clone();
+            version.external_path = binding.external_path.clone();
+            candidates.push(version);
+        }
+    }
+    let mut verified = BTreeMap::new();
+    for entry in fs::read_dir(&target.path)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !entry.file_type()?.is_symlink() || s.bindings.iter().any(|b| Path::new(&b.path) == path)
+        {
+            continue;
+        }
+        let Ok(actual) = fs::canonicalize(&path) else {
+            continue;
+        };
+        if !actual.join("SKILL.md").is_file() {
+            continue;
+        }
+        let mut matches = candidates.iter().filter(|skill| {
+            skill.external_path.is_none()
+                && !skill.bundle_digest.is_empty()
+                && s.skills.iter().any(|current| current.id == skill.id)
+                && skill_path(root, skill) == actual
+        });
+        let Some(skill) = matches.next() else {
+            continue;
+        };
+        if matches.any(|other| other.id != skill.id || other.version != skill.version) {
+            continue;
+        }
+        let valid = *verified
+            .entry(skill.bundle_digest.clone())
+            .or_insert_with(|| {
+                files::snapshot_matches(
+                    &root.join("objects").join(&skill.bundle_digest).join("tree"),
+                    &skill.bundle_digest,
+                )
+                .unwrap_or(false)
+            });
+        if !valid {
+            continue;
+        }
+        let before = fs::read_link(&path)?;
+        if before != actual {
+            changes.push(Change {
+                restore: false,
+                backup_digest: None,
+                path: path.clone(),
+                before: Some(before),
+                after: Some(actual),
+                backup: None,
+            });
+        }
+        s.bindings.push(Binding {
+            id: id(),
+            skill_id: skill.id.clone(),
+            target_id: target.id.clone(),
+            path: path.display().to_string(),
+            version: skill.version.clone(),
+            digest: skill.bundle_digest.clone(),
+            relative_path: skill.relative_path.clone(),
+            claims: vec!["manual".into()],
+            follow: false,
+            borrowed: false,
+            original_link: None,
+            external_path: None,
+        });
+    }
+    Ok(())
+}
+
 pub(crate) fn inferred_target(path: &Path, profiles: &[AgentProfile]) -> Target {
     for profile in profiles {
         for configured in &profile.user_paths {
@@ -280,7 +367,17 @@ fn build_plan(
                 {
                     item.error = "已有链接已被外部修改或丢失".into();
                 }
-                if b.skill_id != skill.id {
+                let same_entity = claim == "manual"
+                    && fs::canonicalize(binding_path(root, b))
+                        .ok()
+                        .is_some_and(|path| {
+                            Some(path) == fs::canonicalize(skill_path(root, skill)).ok()
+                        });
+                if b.skill_id != skill.id && same_entity {
+                    // Adding a manual claim to the same entity is not a source switch.
+                    // Keep the existing identity, ownership and restoration metadata.
+                    item.action = "reuse".into();
+                } else if b.skill_id != skill.id {
                     let blocking_claims: Vec<_> = b
                         .claims
                         .iter()
@@ -1069,13 +1166,15 @@ impl Engine {
                         if s.targets.iter().any(|t| Path::new(&t.path) == p) {
                             return fail("该物理目录已是分发目标，多个工具可能共享此位置");
                         }
-                        s.targets.push(Target {
+                        let target = Target {
                             id: id(),
                             name: text(r, "name")?.trim().into(),
                             tool: optional(r, "tool", "custom").into(),
                             scope: optional(r, "scope", "project").into(),
                             path: p.display().to_string(),
-                        });
+                        };
+                        restore_target_bindings(s, root, &target, changes)?;
+                        s.targets.push(target);
                     }
                     "refresh_snapshot" => {
                         expected(s, r)?;

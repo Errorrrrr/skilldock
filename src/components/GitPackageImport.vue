@@ -21,6 +21,7 @@ const presetId = ref('')
 const presetName = ref('')
 const autoAdd = ref(true)
 const busy = ref(false)
+const installing = ref(false)
 const error = ref('')
 let request = 0
 watch([url, reference, subdir], () => {
@@ -33,6 +34,7 @@ const presets = computed(() => [
   ...(app.snapshot?.presets ?? []).map((p) => ({ value: p.id, label: p.name })),
 ])
 async function scan() {
+  if (busy.value) return
   const seq = ++request
   busy.value = true
   error.value = ''
@@ -54,7 +56,7 @@ async function scan() {
   }
 }
 async function install() {
-  if (!preview.value) return
+  if (!preview.value || busy.value) return
   if (!props.draft && attach.value === 'existing' && !presetId.value) {
     error.value = '请选择预设'
     return
@@ -64,6 +66,7 @@ async function install() {
     return
   }
   busy.value = true
+  installing.value = true
   error.value = ''
   try {
     const result = await api.importGitPackage({
@@ -82,6 +85,7 @@ async function install() {
     error.value = String(e instanceof Error ? e.message : e)
   } finally {
     busy.value = false
+    installing.value = false
   }
 }
 </script>
@@ -91,7 +95,7 @@ async function install() {
       ><span class="field-label">Git 仓库或 GitHub 文件夹链接</span>
       <div class="git-source-input">
         <input v-model="url" class="input" :disabled="busy" />
-        <Button :disabled="busy || !url.trim()" @click="scan">{{
+        <Button :disabled="busy || !url.trim()" :loading="busy && !installing" @click="scan">{{
           busy ? '正在处理…' : '预览集合'
         }}</Button>
       </div></label
@@ -203,7 +207,7 @@ async function install() {
             />自动加入后续新增成员；排除项保持不选</label
           >
         </div>
-        <Button variant="primary" :disabled="busy" @click="install">{{
+        <Button variant="primary" :disabled="busy" :loading="installing" @click="install">{{
           busy ? '同步中…' : draft ? '同步集合并加入预设' : '同步 Git 集合'
         }}</Button>
       </div>

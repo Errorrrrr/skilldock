@@ -16,9 +16,13 @@ import { api } from '@/services/api'
 import { copyText, formatDate } from '@/lib/utils'
 import type { Skill } from '@/services/types'
 import { usePagination } from '@/composables/usePagination'
+import { skillEntityKey, skillEntityLabel } from '@/services/librarySkills'
 
 const props = defineProps<{ open: boolean; skill: Skill | null }>()
-const emit = defineEmits<{ 'update:open': [value: boolean]; distribute: [skillId: string] }>()
+const emit = defineEmits<{
+  'update:open': [value: boolean]
+  distribute: [skillId: string]
+}>()
 const app = useAppStore()
 const markdown = ref('')
 const loadingContent = ref(false)
@@ -29,10 +33,32 @@ const rollbackBinding = ref('')
 const rollbackDigest = ref('')
 const contentPath = computed(() =>
   app.snapshot && props.skill
-    ? props.skill.externalPath ||
+    ? app.snapshot.skillEntityPaths?.[props.skill.id] ||
+      props.skill.externalPath ||
       `${app.snapshot.storageRoot}/objects/${props.skill.bundleDigest}/tree/${props.skill.relativePath}`
     : '',
 )
+const entityLabel = computed(() =>
+  app.snapshot && props.skill ? skillEntityLabel(props.skill, app.snapshot) : '实体位置未确认',
+)
+const entityRecords = computed(() => {
+  if (!app.snapshot || !props.skill) return []
+  const snapshot = app.snapshot
+  const key = skillEntityKey(props.skill, snapshot)
+  return snapshot.skills
+    .filter(
+      (member) =>
+        member.name.toLocaleLowerCase() === props.skill!.name.toLocaleLowerCase() &&
+        skillEntityKey(member, snapshot) === key,
+    )
+    .map((member) => ({
+      id: member.id,
+      sourceName:
+        app.sourceName(snapshot.sources.find((source) => source.id === member.sourceId)) ||
+        '独立来源',
+      version: member.version || '未记录',
+    }))
+})
 const bindings = computed(
   () => app.snapshot?.bindings.filter((item) => item.skillId === props.skill?.id) ?? [],
 )
@@ -109,7 +135,7 @@ const rollbackSkill = computed(() =>
 const rollbackDigestOptions = computed(() =>
   versions.value.map((version) => ({
     value: version.bundleDigest,
-    label: `${version.version} · ${version.bundleDigest.slice(0, 12)}`,
+    label: `快照 ${version.bundleDigest.slice(0, 12)} · 来源记录版本：${version.version}`,
   })),
 )
 </script>
@@ -133,13 +159,15 @@ const rollbackDigestOptions = computed(() =>
         <div class="actions" style="margin-bottom: 14px">
           <Button variant="primary" @click="skill && emit('distribute', skill.id)"
             ><Link2 />分发</Button
-          ><Badge tone="blue">{{
-            skill?.externalPath ? '跟随本地内容' : `v${skill?.version}`
-          }}</Badge>
+          ><Badge tone="blue">{{ skill?.externalPath ? '跟随本地内容' : '统一库快照' }}</Badge>
         </div>
         <dl class="detail-list">
           <div class="detail-row">
-            <dt>来源</dt>
+            <dt>当前实体</dt>
+            <dd class="full-location">{{ entityLabel }}</dd>
+          </div>
+          <div class="detail-row">
+            <dt>当前记录来源</dt>
             <dd class="full-location">
               {{ app.sourceName(source) || '独立来源' }}
               <div v-if="source?.url" class="mono">{{ source.url }}</div>
@@ -153,12 +181,13 @@ const rollbackDigestOptions = computed(() =>
             <dd>
               <span class="mono">{{ contentPath }}</span
               ><button class="link-button" style="margin-left: 8px" @click="copyPath">
-                <Copy style="width: 12px; display: inline" /> {{ copied ? '已复制' : '复制' }}
+                <Copy style="width: 12px; display: inline" />
+                {{ copied ? '已复制' : '复制' }}
               </button>
             </dd>
           </div>
           <div class="detail-row">
-            <dt>内容摘要</dt>
+            <dt>整包快照摘要</dt>
             <dd class="mono">
               {{ skill?.externalPath ? '本地引用，不锁定内容摘要' : skill?.bundleDigest }}
             </dd>
@@ -172,6 +201,16 @@ const rollbackDigestOptions = computed(() =>
             <dd>请查阅 SKILL.md 中声明的系统与依赖要求</dd>
           </div>
         </dl>
+        <section style="margin-top: 16px" aria-label="当前实体的来源记录">
+          <h3 class="field-label">来源记录（{{ entityRecords.length }}）</h3>
+          <p class="subtle">来源记录版本用于追溯，当前使用的内容以实体为准。</p>
+          <dl class="detail-list">
+            <div v-for="record in entityRecords" :key="record.id" class="detail-row">
+              <dt class="full-location">{{ record.sourceName }}</dt>
+              <dd class="full-location">来源记录版本：{{ record.version }}</dd>
+            </div>
+          </dl>
+        </section>
       </TabsContent>
       <TabsContent class="skill-detail-content" value="content"
         ><div v-if="loadingContent" class="skeleton" style="height: 240px" />
@@ -192,7 +231,9 @@ const rollbackDigestOptions = computed(() =>
                   )
                 }}
               </div>
-              <div class="list-row-meta mono full-location">{{ binding.path }}</div>
+              <div class="list-row-meta mono full-location">
+                {{ binding.path }}
+              </div>
               <SkillDirectoryActions :binding="binding" />
               <div class="actions" style="margin-top: 6px">
                 <Badge
@@ -240,7 +281,7 @@ const rollbackDigestOptions = computed(() =>
                       ? '跟随来源更新'
                       : '固定版本'
                 }}
-                · 当前 {{ binding.version }}
+                · 分发记录版本：{{ binding.version }}
               </div>
               <SkillDirectoryActions :binding="binding" />
             </div>

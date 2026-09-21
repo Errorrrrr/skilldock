@@ -294,6 +294,10 @@ pub struct ExternalInstallation {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
+    // Derived from the current filesystem; never trust a persisted observation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub skill_entity_paths: Option<std::collections::BTreeMap<String, String>>,
     #[serde(default)]
     pub unmanaged_target_paths: Vec<String>,
     #[serde(default)]
@@ -323,6 +327,7 @@ pub fn schema_version() -> u32 {
 impl Snapshot {
     pub fn empty(root: String) -> Self {
         Self {
+            skill_entity_paths: None,
             unmanaged_target_paths: Vec::new(),
             packages: vec![],
             preset_packages: vec![],

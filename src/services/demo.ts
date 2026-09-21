@@ -434,6 +434,18 @@ export async function demoPlan(
         const incomingPath =
           skill?.externalPath ||
           `${state.storageRoot}/objects/${skill?.bundleDigest}/tree/${skill?.relativePath}`
+        const existingPath =
+          binding &&
+          (binding.externalPath ||
+            `${state.storageRoot}/objects/${binding.digest}/tree/${binding.relativePath}`)
+        if (
+          binding &&
+          binding.skillId !== skillId &&
+          claim === 'manual' &&
+          existingPath === incomingPath
+        ) {
+          return { skillId, targetId, path, action: 'reuse', error: '' }
+        }
         if (binding && binding.skillId !== skillId) {
           const blockingClaims = binding.claims.filter((c) => c !== 'manual' && c !== claim)
           const confirmed = replaceBindingIds.includes(binding.id)
@@ -504,10 +516,24 @@ export async function demoDistribute(
   for (const skillId of skillIds)
     for (const targetId of targetIds) {
       const existing = state.bindings.find(
-        (item) => item.skillId === skillId && item.targetId === targetId,
+        (item) =>
+          item.targetId === targetId &&
+          (item.skillId === skillId ||
+            plan.items.some(
+              (planned) =>
+                planned.skillId === skillId &&
+                planned.targetId === targetId &&
+                planned.action === 'reuse' &&
+                planned.path === item.path,
+            )),
       )
       if (existing) {
-        if (adoptExisting && existing.borrowed && findSkill(skillId)?.externalPath) {
+        if (
+          existing.skillId === skillId &&
+          adoptExisting &&
+          existing.borrowed &&
+          findSkill(skillId)?.externalPath
+        ) {
           existing.borrowed = false
           existing.originalLink = undefined
         }
