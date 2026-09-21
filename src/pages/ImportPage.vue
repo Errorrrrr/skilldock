@@ -329,6 +329,7 @@ function nextReview() {
   step.value = 3
 }
 async function execute() {
+  if (busy.value) return
   busy.value = true
   const grouped = new Map<string, string[]>()
   for (const item of selectedItems.value) {
@@ -411,6 +412,7 @@ const resolutionOptions = [
           <Button
             variant="primary"
             :disabled="configuring || !rootPath.trim()"
+            :loading="configuring"
             @click="configure"
             >{{ configuring ? '检测中…' : '确认目录并继续' }}</Button
           >
@@ -897,6 +899,7 @@ const resolutionOptions = [
             v-if="step === 1"
             variant="primary"
             :disabled="busy || !scanPaths.length"
+            :loading="busy"
             @click="scan"
             >{{ busy ? '扫描中…' : '开始扫描' }}</Button
           ><Button v-if="step === 2" variant="primary" :disabled="conflictsOpen" @click="nextReview"
@@ -905,6 +908,7 @@ const resolutionOptions = [
             v-if="step === 3"
             variant="primary"
             :disabled="busy || !selectedItems.length"
+            :loading="busy"
             @click="execute"
             >{{ busy ? '正在安全步骤中…' : '执行归集' }}</Button
           >
@@ -951,9 +955,13 @@ const resolutionOptions = [
       <p v-if="directoryError" role="alert" class="callout warning">{{ directoryError }}</p>
       <template #footer>
         <Button :disabled="directoriesSaving" @click="directoriesOpen = false">取消</Button>
-        <Button variant="primary" :disabled="directoriesSaving" @click="saveDirectories">{{
-          directoriesSaving ? '保存中…' : '保存并重新探测'
-        }}</Button>
+        <Button
+          variant="primary"
+          :disabled="directoriesSaving"
+          :loading="directoriesSaving"
+          @click="saveDirectories"
+          >{{ directoriesSaving ? '保存中…' : '保存并重新探测' }}</Button
+        >
       </template>
     </AppDialog>
     <AppDialog

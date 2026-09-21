@@ -152,6 +152,7 @@ watch(folder, () => {
 const scanSelected = ref<string[]>([])
 const error = ref('')
 const busy = ref(false)
+const importing = ref(false)
 const filtered = computed(
   () =>
     app.snapshot?.skills.filter(
@@ -228,6 +229,7 @@ async function importSelected() {
   const session = editSession
   const removals = [...removedSelection.value]
   busy.value = true
+  importing.value = true
   error.value = ''
   try {
     const result = await api.importPackage(
@@ -285,6 +287,7 @@ async function importSelected() {
     if (session === editSession) error.value = e instanceof Error ? e.message : '添加失败'
   } finally {
     busy.value = false
+    importing.value = false
   }
 }
 function addGitPackage(result: GitPackageResult, auto: boolean, removedIds: string[]) {
@@ -770,15 +773,16 @@ async function save() {
           v-if="scanned.length || preview?.packageId"
           variant="primary"
           :disabled="busy || (!scanSelected.length && !preview?.packageId)"
+          :loading="importing"
           @click="importSelected"
-          >同步包并加入预设</Button
+          >{{ importing ? '正在同步…' : '同步包并加入预设' }}</Button
         >
       </div>
     </template>
     <template #footer
-      ><Button @click="emit('update:open', false)">取消</Button
-      ><Button variant="primary" :disabled="busy" @click="save">{{
-        busy ? '保存中…' : '保存预设'
+      ><Button :disabled="busy" @click="emit('update:open', false)">取消</Button
+      ><Button variant="primary" :disabled="busy" :loading="busy && !importing" @click="save">{{
+        busy && !importing ? '保存中…' : '保存预设'
       }}</Button></template
     ></AppDialog
   >

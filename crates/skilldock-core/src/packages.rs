@@ -109,6 +109,18 @@ impl Engine {
 
     // A filesystem observation never grants permission to remove an installation.
     pub(crate) fn observe_installations(state: &mut Snapshot) {
+        state.skill_entity_paths = Some(
+            state
+                .skills
+                .iter()
+                .filter_map(|skill| {
+                    fs::canonicalize(skill_path(Path::new(&state.storage_root), skill))
+                        .ok()
+                        .filter(|path| path.join("SKILL.md").is_file())
+                        .map(|path| (skill.id.clone(), path.display().to_string()))
+                })
+                .collect(),
+        );
         state.external_installations.clear();
         let mut origins: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
         for skill in &state.skills {

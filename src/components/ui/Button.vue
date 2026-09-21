@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { LoaderCircle } from 'lucide-vue-next'
 import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/utils'
 
@@ -22,6 +23,8 @@ const props = withDefaults(
     size?: ButtonVariants['size']
     class?: string
     type?: 'button' | 'submit'
+    loading?: boolean
+    disabled?: boolean
   }>(),
   { variant: 'secondary', size: 'default', type: 'button' },
 )
@@ -31,5 +34,29 @@ const classes = computed(() =>
 </script>
 
 <template>
-  <button :type="type" :class="classes"><slot /></button>
+  <button
+    :type="type"
+    :class="classes"
+    :disabled="disabled || loading"
+    :aria-busy="loading || undefined"
+  >
+    <LoaderCircle v-if="loading" class="button-spinner" aria-hidden="true" />
+    <slot />
+  </button>
 </template>
+
+<style scoped>
+.button-spinner {
+  animation: button-spin 1s linear infinite;
+}
+@keyframes button-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .button-spinner {
+    animation: none;
+  }
+}
+</style>

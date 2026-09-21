@@ -52,8 +52,10 @@ const gitOpen = ref(false)
 const gitUrl = ref('')
 const gitRef = ref('HEAD')
 const gitSubdir = ref('')
+const importingGit = ref(false)
 const folderOpen = ref(false)
 const folder = ref(app.isNative ? '' : '/Users/demo/Downloads/community-skills')
+const importingFolder = ref(false)
 const installed = computed(
   () =>
     new Set(
@@ -153,26 +155,37 @@ async function install() {
   installOpen.value = false
 }
 async function importGit() {
-  const ok = await app.mutate(
-    () => api.importGit(gitUrl.value, gitRef.value || 'HEAD', gitSubdir.value || undefined),
-    'Git 来源已导入',
-  )
-  if (ok) gitOpen.value = false
+  if (importingGit.value || !gitUrl.value.trim()) return
+  importingGit.value = true
+  try {
+    const ok = await app.mutate(
+      () =>
+        api.importGit(gitUrl.value.trim(), gitRef.value || 'HEAD', gitSubdir.value || undefined),
+      'Git 来源已导入',
+    )
+    if (ok) gitOpen.value = false
+  } finally {
+    importingGit.value = false
+  }
 }
 async function importFolder() {
+  if (importingFolder.value || !folder.value.trim()) return
+  importingFolder.value = true
   try {
-    const scan = await api.scan(folder.value)
+    const scan = await api.scan(folder.value.trim())
     const paths = scan.items
       .filter((i) => ['ready', 'new', 'same'].includes(i.status))
       .map((i) => i.path)
     if (!paths.length) throw new Error('未发现可直接导入的 Skill；冲突内容请使用归集向导')
     const ok = await app.mutate(
-      () => api.importFolder(folder.value, paths, false),
+      () => api.importFolder(folder.value.trim(), paths, false),
       `已从文件夹导入 ${paths.length} 项`,
     )
     if (ok) folderOpen.value = false
   } catch (e) {
     app.error = e instanceof Error ? e.message : '导入失败'
+  } finally {
+    importingFolder.value = false
   }
 }
 onMounted(() => {
@@ -337,8 +350,8 @@ onMounted(() => {
         </section>
       </div>
       <template #footer
-        ><Button @click="installOpen = false">取消</Button
-        ><Button variant="primary" :disabled="installing" @click="install">{{
+        ><Button :disabled="installing" @click="installOpen = false">取消</Button
+        ><Button variant="primary" :disabled="installing" :loading="installing" @click="install">{{
           installing ? '安装中…' : '安装并继续'
         }}</Button></template
       ></AppDialog
@@ -349,14 +362,16 @@ onMounted(() => {
       description="可指定分支、标签、提交号与仓库子目录。"
       ><div class="list-stack">
         <label class="field"
-          ><span class="field-label">仓库地址</span><input v-model="gitUrl" class="input"
+          ><span class="field-label">仓库地址</span
+          ><input v-model="gitUrl" class="input" :disabled="importingGit"
         /></label>
         <div class="form-grid">
           <label class="field"
-            ><span class="field-label">引用</span><input v-model="gitRef" class="input" /></label
+            ><span class="field-label">引用</span
+            ><input v-model="gitRef" class="input" :disabled="importingGit" /></label
           ><label class="field"
             ><span class="field-label">子目录</span
-            ><input v-model="gitSubdir" class="input" placeholder="可选"
+            ><input v-model="gitSubdir" class="input" placeholder="可选" :disabled="importingGit"
           /></label>
         </div>
         <div class="callout">
@@ -364,8 +379,14 @@ onMounted(() => {
         </div>
       </div>
       <template #footer
-        ><Button @click="gitOpen = false">取消</Button
-        ><Button variant="primary" @click="importGit">导入</Button></template
+        ><Button :disabled="importingGit" @click="gitOpen = false">取消</Button
+        ><Button
+          variant="primary"
+          :disabled="importingGit || !gitUrl.trim()"
+          :loading="importingGit"
+          @click="importGit"
+          >{{ importingGit ? '导入中…' : '导入' }}</Button
+        ></template
       ></AppDialog
     >
     <AppDialog
@@ -373,14 +394,21 @@ onMounted(() => {
       title="复制文件夹入库"
       description="将内容复制到统一库，原文件夹保留；直接使用原目录请添加本地来源。"
       ><label class="field"
-        ><span class="field-label">文件夹</span><DirectoryField v-model="folder"
+        ><span class="field-label">文件夹</span
+        ><DirectoryField v-model="folder" :disabled="importingFolder"
       /></label>
       <div class="callout" style="margin-top: 12px">
         若需要接管目录并替换为软链，请改用“归集已有 Skill”向导。
       </div>
       <template #footer
-        ><Button @click="folderOpen = false">取消</Button
-        ><Button variant="primary" @click="importFolder">扫描并导入</Button></template
+        ><Button :disabled="importingFolder" @click="folderOpen = false">取消</Button
+        ><Button
+          variant="primary"
+          :disabled="importingFolder || !folder.trim()"
+          :loading="importingFolder"
+          @click="importFolder"
+          >{{ importingFolder ? '正在导入…' : '扫描并导入' }}</Button
+        ></template
       ></AppDialog
     >
   </div>

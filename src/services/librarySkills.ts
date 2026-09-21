@@ -5,6 +5,9 @@ export interface LibrarySkill extends Skill {
   members: Skill[]
   memberIds: string[]
   memberSummary: string
+  entityCount: number
+  needsSourceChoice: boolean
+  sourceSummary: string
   bindings: Binding[]
   tools: {
     id: string
@@ -15,6 +18,38 @@ export interface LibrarySkill extends Skill {
     actionLabel: string
     hint: string
   }[]
+}
+
+export function skillEntityKey(skill: Skill, snapshot: Snapshot): string {
+  const resolved = snapshot.skillEntityPaths?.[skill.id]
+  if (resolved) return JSON.stringify(['path', resolved])
+  // An unresolved native path is not evidence that two records share an entity.
+  if (snapshot.skillEntityPaths) return JSON.stringify(['unknown', skill.id])
+  // Compatibility with older backends and the browser demo.
+  if (skill.externalPath) return JSON.stringify(['external', skill.externalPath])
+  if (skill.bundleDigest)
+    return JSON.stringify(['snapshot', skill.bundleDigest, skill.relativePath])
+  return JSON.stringify(['unknown', skill.id])
+}
+
+export function skillDistributionChoices(members: Skill[], snapshot: Snapshot): Skill[] {
+  const entities = new Map<string, Skill>()
+  for (const skill of members) {
+    const key = skillEntityKey(skill, snapshot)
+    if (!entities.has(key)) entities.set(key, skill)
+  }
+  return [...entities.values()]
+}
+
+export function skillEntityLabel(skill: Skill, snapshot: Snapshot): string {
+  const key = skillEntityKey(skill, snapshot)
+  const managed = snapshot.skills.find(
+    (member) => !member.externalPath && skillEntityKey(member, snapshot) === key,
+  )
+  if (snapshot.skillEntityPaths && !snapshot.skillEntityPaths[skill.id]) return '实体位置未确认'
+  if (managed?.bundleDigest)
+    return `快照 ${managed.bundleDigest.slice(0, 12)} · ${managed.relativePath}`
+  return `本地目录 · ${snapshot.skillEntityPaths?.[skill.id] || skill.externalPath || '位置未知'}`
 }
 
 // Display identity is the Skill name; source identities remain intact for mutations.
@@ -41,14 +76,18 @@ export function librarySkills(snapshot: Snapshot | null): LibrarySkill[] {
     )
     const memberIds = members.map((member) => member.id)
     const bindings = snapshot.bindings.filter((binding) => memberIds.includes(binding.skillId))
+    const entityCount = skillDistributionChoices(members, snapshot).length
     return {
       ...members[0]!,
       members,
       memberIds,
+      entityCount,
+      needsSourceChoice: entityCount > 1,
+      sourceSummary: `${members.length} 条来源记录 · ${entityCount === 1 ? '同一实体' : `${entityCount} 个分发候选`}`,
       memberSummary: members
         .map((member) => {
           const source = snapshot.sources.find((source) => source.id === member.sourceId)
-          return `${source?.path || source?.url || source?.name || '统一库'} · ${member.version}`
+          return `${source?.path || source?.url || source?.name || '统一库'} · 来源记录版本：${member.version || '未记录'}`
         })
         .join('\n'),
       bindings,
