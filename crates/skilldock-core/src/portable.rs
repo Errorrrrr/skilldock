@@ -10,6 +10,8 @@ struct Migration {
     changes: Vec<Change>,
     #[serde(default)]
     remove_old: bool,
+    #[serde(default)]
+    nested_layout: bool,
 }
 #[derive(Serialize, Deserialize)]
 struct PresetPackage {
@@ -64,6 +66,12 @@ impl Engine {
                 files::undo(change)?;
             }
             migration.status = "rolledBack".into();
+            if migration.nested_layout && migration.new_root.exists() {
+                let retained = migration
+                    .old_root
+                    .join(format!(".skilldock-migration-failed-{}", migration.id));
+                fs::rename(&migration.new_root, retained)?;
+            }
         }
         files::atomic_json(&path, &migration)?;
         Ok(Some(self.snapshot()?))
@@ -84,11 +92,50 @@ impl Engine {
             {
                 return fail("旧目录已被替换为软链，未执行清理");
             }
-            fs::remove_dir_all(&migration.old_root).map_err(|error| {
+            let cleanup = if migration.nested_layout {
+                (|| -> std::io::Result<()> {
+                    for name in [
+                        "objects",
+                        "transactions",
+                        "backups",
+                        "cache",
+                        "trash",
+                        "state.json",
+                        "manager.lock",
+                    ] {
+                        let old = migration.old_root.join(name);
+                        match fs::symlink_metadata(&old) {
+                            Ok(meta) if meta.file_type().is_symlink() => {
+                                return Err(std::io::Error::other("旧库管理目录被替换为软链"));
+                            }
+                            Ok(meta) if meta.is_dir() => fs::remove_dir_all(old)?,
+                            Ok(_) => fs::remove_file(old)?,
+                            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                            Err(e) => return Err(e),
+                        }
+                    }
+                    let _ = fs::remove_dir(migration.old_root.join("skills"));
+                    Ok(())
+                })()
+            } else {
+                fs::remove_dir_all(&migration.old_root)
+            };
+            cleanup.map_err(|error| {
                 error::Error::Message(format!(
                     "新库已启用，但旧目录清理失败：{error}。请从任务记录重试恢复"
                 ))
             })?;
+        }
+        if !migration.nested_layout
+            && migration
+                .old_root
+                .file_name()
+                .is_some_and(|n| n == ".skilldock")
+        {
+            // Only an empty former public directory is removed; foreign files remain.
+            if let Some(parent) = migration.old_root.parent() {
+                let _ = fs::remove_dir(parent);
+            }
         }
         let mut state: Snapshot =
             serde_json::from_slice(&fs::read(migration.new_root.join("state.json"))?)?;
@@ -109,14 +156,31 @@ impl Engine {
         if fs::canonicalize(&self.config_dir)?.starts_with(&old_root) {
             return fail("应用配置目录位于旧库内，无法安全清理旧库");
         }
+        let library_lock = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(old_root.join("manager.lock"))?;
+        fs4::FileExt::try_lock(&library_lock)
+            .map_err(|_| error::Error::Message("中央库正在使用".into()))?;
         let mut state = self.snapshot()?;
         if state.tasks.iter().any(|t| t.status == "needsRecovery") {
             return fail("请先恢复未完成任务");
         }
-        let new_root = files::absolute(path)?;
+        let destination = files::absolute(path)?;
+        Self::check_root(&destination)?;
+        let nested_layout = state.schema_version >= 3
+            && destination == old_root
+            && old_root.file_name().is_some_and(|n| n != ".skilldock");
+        let new_root = if state.schema_version >= 3 {
+            destination.join(".skilldock")
+        } else {
+            destination
+        };
         Self::check_root(&new_root)?;
         self.check_external_migration(&old_root, &state, &new_root)?;
-        if new_root.starts_with(&old_root) || old_root.starts_with(&new_root) {
+        if !nested_layout && (new_root.starts_with(&old_root) || old_root.starts_with(&new_root)) {
             return fail("新旧目录不能互相包含");
         }
         if new_root.exists() && fs::read_dir(&new_root)?.next().is_some() {
@@ -125,7 +189,7 @@ impl Engine {
         fs::create_dir_all(&new_root)?;
         let new_root = fs::canonicalize(new_root)?;
         self.check_external_migration(&old_root, &state, &new_root)?;
-        if new_root.starts_with(&old_root) || old_root.starts_with(&new_root) {
+        if !nested_layout && (new_root.starts_with(&old_root) || old_root.starts_with(&new_root)) {
             return fail("新旧目录解析后互相包含");
         }
         for target in &state.targets {
@@ -134,7 +198,7 @@ impl Engine {
                 return fail("新统一目录与已有分发目标互相包含");
             }
         }
-        let changes = state
+        let mut changes = state
             .bindings
             .iter()
             .filter(|b| b.external_path.is_none())
@@ -147,8 +211,37 @@ impl Engine {
                 backup: None,
             })
             .collect::<Vec<_>>();
+        for (sid, name) in &state.library_entries {
+            let skill = state
+                .skills
+                .iter()
+                .find(|s| &s.id == sid)
+                .ok_or_else(|| error::Error::Message("库入口归属丢失".into()))?;
+            let old = single_content::library_directory(&old_root).join(name);
+            let new = single_content::library_directory(&new_root).join(name);
+            if files::exists(&old) {
+                changes.push(Change {
+                    path: old,
+                    before: Some(skill_path(&old_root, skill)),
+                    after: None,
+                    backup: None,
+                    restore: false,
+                    backup_digest: None,
+                });
+            }
+            changes.push(Change {
+                path: new,
+                before: None,
+                after: Some(skill_path(&new_root, skill)),
+                backup: None,
+                restore: false,
+                backup_digest: None,
+            });
+        }
         for c in &changes {
-            if fs::read_link(&c.path).ok() != c.before {
+            if fs::read_link(&c.path).ok() != c.before
+                || (c.before.is_none() && files::exists(&c.path))
+            {
                 return fail("有异常链接，请先诊断");
             }
         }
@@ -159,11 +252,21 @@ impl Engine {
             new_root: new_root.clone(),
             changes,
             remove_old: true,
+            nested_layout,
         };
         let control = self.config_dir.join("migration.json");
         files::atomic_json(&control, &migration)?;
         let result = (|| -> Result<()> {
-            files::copy_tree(&old_root, &new_root)?;
+            if nested_layout {
+                for name in ["objects", "transactions", "backups", "cache", "trash"] {
+                    let source = old_root.join(name);
+                    if source.exists() {
+                        files::copy_tree(&source, &new_root.join(name))?;
+                    }
+                }
+            } else {
+                files::copy_tree(&old_root, &new_root)?;
+            }
             for e in fs::read_dir(new_root.join("objects"))? {
                 let e = e?;
                 if !e.path().join("tree").is_dir() {
@@ -208,6 +311,12 @@ impl Engine {
             if undo_errors.is_empty() {
                 migration.status = "rolledBack".into();
                 files::atomic_json(&control, &migration)?;
+                if migration.nested_layout && migration.new_root.exists() {
+                    let retained = migration
+                        .old_root
+                        .join(format!(".skilldock-migration-failed-{}", migration.id));
+                    fs::rename(&migration.new_root, retained)?;
+                }
             }
             return fail(format!(
                 "迁移未完成：{e}。旧库和新目录内容均保留。{}",
@@ -481,24 +590,33 @@ mod migration_cleanup_tests {
         let old = temp.path().join("old");
         let new = temp.path().join("new");
         engine.configure(old.to_str().unwrap()).unwrap();
-        let tree = old.join("objects/staging/tree");
+        let root = engine.root().unwrap().unwrap();
+        let tree = root.join("objects/staging/tree");
         fs::create_dir_all(&tree).unwrap();
         fs::write(tree.join("SKILL.md"), "# Migration example").unwrap();
         let digest = files::tree_digest(&tree).unwrap();
         fs::rename(
-            old.join("objects/staging"),
-            old.join("objects").join(&digest),
+            root.join("objects/staging"),
+            root.join("objects").join(&digest),
         )
         .unwrap();
         let state = engine.migrate_storage(new.to_str().unwrap()).unwrap();
         assert!(!old.exists());
         assert_eq!(
-            fs::read_to_string(new.join("objects").join(digest).join("tree/SKILL.md")).unwrap(),
+            fs::read_to_string(
+                new.join(".skilldock/objects")
+                    .join(digest)
+                    .join("tree/SKILL.md")
+            )
+            .unwrap(),
             "# Migration example"
         );
         assert_eq!(
             state.storage_root,
-            fs::canonicalize(new).unwrap().display().to_string()
+            fs::canonicalize(new.join(".skilldock"))
+                .unwrap()
+                .display()
+                .to_string()
         );
         assert!(
             state
@@ -514,7 +632,8 @@ mod migration_cleanup_tests {
         let engine = Engine::new(Some(temp.path().join("config"))).unwrap();
         let old = temp.path().join("old");
         engine.configure(old.to_str().unwrap()).unwrap();
-        let tree = old.join("objects/incorrect-digest/tree");
+        let root = engine.root().unwrap().unwrap();
+        let tree = root.join("objects/incorrect-digest/tree");
         fs::create_dir_all(&tree).unwrap();
         fs::write(tree.join("SKILL.md"), "# Keep this skill").unwrap();
         assert!(
@@ -525,7 +644,7 @@ mod migration_cleanup_tests {
         assert!(tree.join("SKILL.md").is_file());
         assert_eq!(
             engine.root().unwrap().unwrap(),
-            fs::canonicalize(old).unwrap()
+            fs::canonicalize(old.join(".skilldock")).unwrap()
         );
     }
 
@@ -542,17 +661,18 @@ mod migration_cleanup_tests {
         let old = temp.path().join("old");
         std::os::unix::fs::symlink(&protected, &old).unwrap();
         let mut migration = Migration {
+            nested_layout: false,
             id: "cleanup-retry".into(),
             status: "running".into(),
             old_root: old.clone(),
-            new_root: fs::canonicalize(&new).unwrap(),
+            new_root: fs::canonicalize(new.join(".skilldock")).unwrap(),
             changes: vec![],
             remove_old: true,
         };
         assert!(engine.finish_migration_cleanup(&mut migration).is_err());
         assert_eq!(
             engine.root().unwrap().unwrap(),
-            fs::canonicalize(new).unwrap()
+            fs::canonicalize(new.join(".skilldock")).unwrap()
         );
         assert!(
             engine

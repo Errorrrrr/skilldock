@@ -130,7 +130,44 @@ export interface GitPackageResult {
   presetId: string
 }
 
+export interface SingleContentPreview {
+  revision: number
+  alreadyEnabled: boolean
+  groups: { name: string; skills: Skill[]; identical: boolean }[]
+  bindings: Snapshot['bindings']
+  presets: Snapshot['presets']
+  backupCount: number
+}
+export interface SingleContentChoice {
+  name: string
+  skillId?: string
+  keepSeparate?: boolean
+}
+
 export const api = {
+  replaceCurrentContent: (
+    skillId: string,
+    replacementId: string,
+    expectedRevision: number,
+  ): Promise<Snapshot> =>
+    isNative
+      ? native('replace_current_content', { skillId, replacementId, expectedRevision })
+      : demo.demoReplaceCurrentContent(skillId, replacementId, expectedRevision),
+  previewSingleContent: (): Promise<SingleContentPreview> =>
+    isNative ? native('preview_single_content') : demo.demoPreviewSingleContent(),
+  enableSingleContent: (
+    expectedRevision: number,
+    choices: SingleContentChoice[],
+  ): Promise<Snapshot> =>
+    isNative
+      ? native('enable_single_content', { expectedRevision, choices })
+      : demo.demoEnableSingleContent(expectedRevision, choices),
+  arrangeLibrary: (): Promise<Snapshot> =>
+    isNative ? native('arrange_library') : demo.demoArrangeLibrary(),
+  undoContentUpdate: (sourceId: string, expectedRevision: number): Promise<Snapshot> =>
+    isNative
+      ? native('undo_content_update', { sourceId, expectedRevision })
+      : demo.demoUndoContentUpdate(sourceId, expectedRevision),
   previewGitPackage: (url: string, reference: string, subdir: string): Promise<GitPackagePreview> =>
     native('preview_git_package', { url, reference, subdir }),
   importGitPackage: (input: {

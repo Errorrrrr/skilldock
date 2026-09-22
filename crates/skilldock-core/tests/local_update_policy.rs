@@ -37,7 +37,8 @@ async fn local_git_package_stays_manual_and_legacy_policy_is_disabled() {
     );
     let engine = Engine::new(Some(base.join("config"))).unwrap();
     let library = base.join("library");
-    engine.configure(library.to_str().unwrap()).unwrap();
+    let configured = engine.configure(library.to_str().unwrap()).unwrap();
+    let library = std::path::PathBuf::from(configured.storage_root);
     let revision = engine.snapshot().unwrap().revision;
     let result = engine
         .execute(json!({"action":"import_package", "path":repo, "revision":revision}))

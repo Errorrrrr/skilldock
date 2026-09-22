@@ -285,7 +285,14 @@ function requestRevoke(binding: Binding) {
               >
               <SkillDirectoryActions :binding="binding" />
               <div class="list-row-meta">
-                {{ binding.externalPath ? '跟随本地内容' : `v${binding.version}` }} ·
+                {{
+                  binding.externalPath
+                    ? '跟随本地内容'
+                    : (app.snapshot?.schemaVersion ?? 0) >= 3
+                      ? '当前内容'
+                      : `v${binding.version}`
+                }}
+                ·
                 {{
                   binding.claims
                     .map((c) =>
@@ -307,9 +314,11 @@ function requestRevoke(binding: Binding) {
                   ? '软链断开'
                   : binding.externalPath
                     ? '跟随本地内容'
-                    : binding.follow
-                      ? '跟随更新'
-                      : '固定版本'
+                    : (app.snapshot?.schemaVersion ?? 0) >= 3
+                      ? '使用当前内容'
+                      : binding.follow
+                        ? '跟随更新'
+                        : '固定版本'
               }}</Badge
             ><Button
               size="icon"

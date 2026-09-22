@@ -82,7 +82,14 @@ const presetMemberVersions = computed(() =>
     presetSkillIds.value.map((id) => {
       const member =
         currentPreset.value?.locks[id] || app.snapshot?.skills.find((skill) => skill.id === id)
-      return [id, member?.externalPath ? '跟随本地内容' : `v${member?.version || '未知'}`]
+      return [
+        id,
+        member?.externalPath
+          ? '跟随本地内容'
+          : (app.snapshot?.schemaVersion ?? 0) >= 3
+            ? '当前内容'
+            : `v${member?.version || '未知'}`,
+      ]
     }),
   ),
 )
@@ -292,9 +299,7 @@ function applyFromCard(preset: Preset) {
         </div>
         <div class="detail-row">
           <dt>应用目标</dt>
-          <dd>
-            {{ appliedTargetIds.length }} 个；包同步会推进跟随更新的目标，固定目标保留当前版本。
-          </dd>
+          <dd>{{ appliedTargetIds.length }} 个；预设成员更新后同步所有受管目标。</dd>
         </div>
       </dl>
       <div
@@ -319,13 +324,22 @@ function applyFromCard(preset: Preset) {
             }}</strong>
             <div class="choice-meta">
               已应用 r{{ application.appliedRevision }} ·
-              {{ application.follow ? '跟随包更新' : '固定版本' }}
+              {{
+                (app.snapshot?.schemaVersion ?? 0) >= 3
+                  ? '使用当前内容'
+                  : application.follow
+                    ? '跟随包更新'
+                    : '固定版本'
+              }}
             </div>
             <p v-if="application.error" class="field-error">{{ application.error }}</p>
           </div>
-          <Button size="sm" @click="toggleFollow(application.targetId, !application.follow)">{{
-            application.follow ? '固定版本' : '跟随更新'
-          }}</Button>
+          <Button
+            v-if="(app.snapshot?.schemaVersion ?? 0) < 3"
+            size="sm"
+            @click="toggleFollow(application.targetId, !application.follow)"
+            >{{ application.follow ? '固定版本' : '跟随更新' }}</Button
+          >
         </div>
         <Button size="sm" @click="retrySync">同步 / 重试目标</Button>
       </section>

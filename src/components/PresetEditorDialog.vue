@@ -366,7 +366,7 @@ async function save() {
     :open="open"
     fixed-layout
     :title="preset ? '编辑预设' : '新建预设'"
-    description="保存后同步已跟随此预设的目标；固定版本和其他引用保留。"
+    description="保存成员组合，单一内容模式下所有受管目标使用当前内容。"
     large
     @update:open="emit('update:open', $event)"
     ><div class="form-grid" style="margin-bottom: 8px">

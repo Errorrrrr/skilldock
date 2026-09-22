@@ -15,6 +15,12 @@ fn restore_target_bindings(
 ) -> Result<()> {
     let mut candidates = s.skills.clone();
     candidates.extend(s.presets.iter().flat_map(|p| p.locks.values()).cloned());
+    candidates.extend(
+        s.content_backups
+            .iter()
+            .flat_map(|b| b.skills.iter())
+            .cloned(),
+    );
     for binding in &s.bindings {
         if let Some(skill) = s.skills.iter().find(|skill| skill.id == binding.skill_id) {
             let mut version = skill.clone();
@@ -23,6 +29,42 @@ fn restore_target_bindings(
             version.version = binding.version.clone();
             version.external_path = binding.external_path.clone();
             candidates.push(version);
+        }
+    }
+    if s.schema_version >= 3 && s.unmanaged_target_paths.contains(&target.path) {
+        // A removed target may still point to content older than the one-step backup.
+        // Journals supply identity evidence only; they do not retain history objects.
+        for entry in fs::read_dir(root.join("transactions"))? {
+            let entry = entry?;
+            if entry.path().extension().and_then(|v| v.to_str()) != Some("json") {
+                continue;
+            }
+            let journal: Journal = serde_json::from_slice(&fs::read(entry.path())?)?;
+            if !matches!(
+                journal.status.as_str(),
+                "committed" | "expired" | "restored"
+            ) {
+                continue;
+            }
+            for snapshot in [&journal.before, &journal.after] {
+                for binding in &snapshot.bindings {
+                    if binding.external_path.is_some()
+                        || Path::new(&binding.path).parent() != Some(Path::new(&target.path))
+                    {
+                        continue;
+                    }
+                    if let Some(current) =
+                        s.skills.iter().find(|skill| skill.id == binding.skill_id)
+                    {
+                        let mut candidate = current.clone();
+                        candidate.bundle_digest = binding.digest.clone();
+                        candidate.relative_path = binding.relative_path.clone();
+                        candidate.version = binding.version.clone();
+                        candidate.external_path = None;
+                        candidates.push(candidate);
+                    }
+                }
+            }
         }
     }
     let mut verified = BTreeMap::new();
@@ -48,7 +90,9 @@ fn restore_target_bindings(
         let Some(skill) = matches.next() else {
             continue;
         };
-        if matches.any(|other| other.id != skill.id || other.version != skill.version) {
+        if matches.any(|other| {
+            other.id != skill.id || (s.schema_version < 3 && other.version != skill.version)
+        }) {
             continue;
         }
         let valid = *verified
@@ -1117,6 +1161,9 @@ impl Engine {
                 _ => "更新管理记录",
             },
             |s, root, changes| {
+                if s.schema_version >= 3 && matches!(action, "set_follow" | "set_preset_follow" | "rollback") {
+                    return fail("所有工具共用当前内容；需要恢复时请撤销上次来源更新");
+                }
                 match action {
                     "remove_update_source" => {
                         if r.get("expectedRevision").and_then(Value::as_u64) != Some(s.revision as u64) {
@@ -1795,7 +1842,7 @@ impl Engine {
                         .collect::<BTreeMap<_, _>>();
                     for skill in s.skills.iter_mut().filter(|x| x.source_id == source_id) {
                         if let Some(item) = entries.get(&skill.relative_path) {
-                            if item.name != skill.name {
+                            if item.name != skill.name && s.schema_version < 3 {
                                 details.push(format!("{} 名称变化，待审阅", skill.name));
                                 continue;
                             }
@@ -1923,7 +1970,7 @@ impl Engine {
                     .collect();
                 for skill in s.skills.iter().filter(|i| i.source_id == source_id) {
                     match current_entries.get(&skill.relative_path) {
-                        Some(item) if item.name != skill.name => {
+                        Some(item) if item.name != skill.name && s.schema_version < 3 => {
                             details.push(format!("{} 名称变化，待审阅", skill.name))
                         }
                         None => details.push(format!("{} 已从来源移除，保留旧安装", skill.name)),

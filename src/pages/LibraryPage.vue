@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SingleContentSettings from '@/components/SingleContentSettings.vue'
 import GitPackageImport from '@/components/GitPackageImport.vue'
 import SkillDirectoryActions from '@/components/SkillDirectoryActions.vue'
 import AppSelect from '@/components/ui/AppSelect.vue'
@@ -47,6 +48,11 @@ import { librarySkills, type LibrarySkill } from '@/services/librarySkills'
 import { useLibraryDistribution } from '@/composables/useLibraryDistribution'
 
 const app = useAppStore()
+const needsSimplification = computed(
+  () =>
+    !!app.snapshot?.initialized &&
+    (app.snapshot.schemaVersion < 3 || !/[\\/]\.skilldock$/.test(app.snapshot.storageRoot)),
+)
 const router = useRouter()
 const route = useRoute()
 const query = ref(String(route.query.q || ''))
@@ -449,6 +455,10 @@ const presetIdOptions = computed(() => [
         >
       </template>
     </AppDialog>
+    <SingleContentSettings v-if="needsSimplification" />
+    <p v-if="app.snapshot && app.snapshot.schemaVersion >= 3" class="subtle">
+      每个 Skill 保留当前内容。同名且内容不同的导入会独立保留，可在详情的更新页替换当前内容。
+    </p>
     <section class="panel library-panel">
       <div class="toolbar library-toolbar">
         <div class="search-field">

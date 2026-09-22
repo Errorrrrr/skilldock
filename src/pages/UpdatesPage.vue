@@ -416,7 +416,9 @@ const intervalOptions = [
     <header class="page-heading">
       <div>
         <h1 class="page-title">更新中心</h1>
-        <p class="page-subtitle">内容更新先进入中央库；只有跟随目标会同步，固定版本保持不变。</p>
+        <p class="page-subtitle">
+          单一内容模式下，更新会同步所有受管工具，并保留一次更新前恢复备份。
+        </p>
       </div>
       <Button
         variant="primary"
@@ -624,7 +626,7 @@ const intervalOptions = [
       />
       <div class="pending-note">
         <LockKeyhole :size="14" /><span
-          >更新后仅同步跟随关系；固定版本保留。新增、移除成员按包与预设规则处理。</span
+          >单一内容模式下，更新后同步所有受管工具。新增、移除成员按包与预设规则处理。</span
         >
       </div>
     </section>

@@ -5,7 +5,7 @@ fn setup() -> (tempfile::TempDir, Engine, PathBuf, String) {
     let base = fs::canonicalize(temp.path()).unwrap();
     let engine = Engine::new(Some(base.join("config"))).unwrap();
     engine
-        .configure(base.join("library").to_str().unwrap())
+        .configure_legacy_fixture(base.join("library").to_str().unwrap())
         .unwrap();
     let mut isolated = engine.snapshot().unwrap();
     isolated.settings.agent_profiles.clear();
