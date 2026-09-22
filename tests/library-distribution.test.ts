@@ -38,6 +38,7 @@ function fixture(): Snapshot {
     storageRoot: '/library',
     revision: 1,
     schemaVersion: 1,
+    contentBackups: [], skillOrigins: {}, libraryEntries: {},
     packages: [], presetPackages: [], presetApplications: [], externalInstallations: [],
     skills: [skill('b'), skill('a'), skill('c', 'other')],
     sources: [],

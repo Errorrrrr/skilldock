@@ -293,7 +293,26 @@ pub struct ExternalInstallation {
 }
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+pub struct ContentBackup {
+    #[serde(default)]
+    pub added_skill_ids: Vec<String>,
+    pub source_id: String,
+    pub created_at: String,
+    pub skills: Vec<Skill>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct Snapshot {
+    /// 最近一次更新前的完整来源成员；只用于撤销更新，不提供版本分发。
+    #[serde(default)]
+    pub content_backups: Vec<ContentBackup>,
+    /// 合并收录时保留来源追溯，不创建额外实体。
+    #[serde(default)]
+    pub skill_origins: std::collections::BTreeMap<String, Vec<String>>,
+    /// 名称入口的所有权清单，禁止覆盖用户自行放入的文件。
+    #[serde(default)]
+    pub library_entries: std::collections::BTreeMap<String, String>,
     // Derived from the current filesystem; never trust a persisted observation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -328,6 +347,9 @@ impl Snapshot {
     pub fn empty(root: String) -> Self {
         Self {
             skill_entity_paths: None,
+            content_backups: Vec::new(),
+            skill_origins: Default::default(),
+            library_entries: Default::default(),
             unmanaged_target_paths: Vec::new(),
             packages: vec![],
             preset_packages: vec![],

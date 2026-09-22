@@ -2,7 +2,7 @@
 import { distributionActionLabel } from '@/services/distributionLabels'
 import SkillDirectoryActions from '@/components/SkillDirectoryActions.vue'
 import { computed, ref, watch } from 'vue'
-import { Link2, AlertTriangle, ArrowRight, FolderSymlink } from 'lucide-vue-next'
+import { Link2, AlertTriangle, ArrowRight, FolderSymlink, RefreshCw } from 'lucide-vue-next'
 import AppDialog from './ui/AppDialog.vue'
 import Button from './ui/Button.vue'
 import Badge from './ui/Badge.vue'
@@ -40,7 +40,33 @@ const localError = ref('')
 const selectedSkills = computed(
   () => app.snapshot?.skills.filter((skill) => selectedIds.value.includes(skill.id)) ?? [],
 )
+const repairSkill = computed(() => {
+  if (!localError.value) return null
+  const err = localError.value
+  const isSnapshotError =
+    err.includes('快照') &&
+    (err.includes('变化') || err.includes('修改') || err.includes('重新收录'))
+  if (!isSnapshotError) return null
 
+  // 1. Match by bundleDigest mentioned in the error message
+  const matchDigest = app.snapshot?.skills.find(
+    (s) => s.bundleDigest && err.includes(s.bundleDigest),
+  )
+  if (matchDigest) return matchDigest
+
+  // 2. Fallback to single selected skill
+  if (selectedSkills.value.length === 1) return selectedSkills.value[0]!
+
+  return null
+})
+const repairPreview = ref<{
+  revision: number
+  contentDigest: string
+  skillCount: number
+  path: string
+} | null>(null)
+const preparingRepair = ref(false)
+const repairing = ref(false)
 const entityLabels = computed(() =>
   Object.fromEntries(
     selectedSkills.value.map((skill) => [
@@ -151,6 +177,9 @@ watch(
       takeover.value = false
       adoptExisting.value = false
       localError.value = ''
+      repairPreview.value = null
+      preparingRepair.value = false
+      repairing.value = false
     }
   },
 )
@@ -162,6 +191,7 @@ async function preview() {
   }
   busy.value = true
   localError.value = ''
+  repairPreview.value = null
   try {
     plan.value = await api.plan(
       selectedIds.value,
@@ -192,6 +222,48 @@ function backToSelection() {
   takeover.value = false
   adoptExisting.value = false
   localError.value = ''
+  repairPreview.value = null
+}
+async function prepareRepair() {
+  if (!repairSkill.value || preparingRepair.value || busy.value) return
+  preparingRepair.value = true
+  try {
+    repairPreview.value = await api.previewSnapshotRefresh(repairSkill.value.id)
+  } catch (err) {
+    localError.value = err instanceof Error ? err.message : '无法检查当前文件状态'
+  } finally {
+    preparingRepair.value = false
+  }
+}
+async function confirmRepair() {
+  if (!repairSkill.value || !repairPreview.value || repairing.value || busy.value) return
+  repairing.value = true
+  const previewData = repairPreview.value
+  const skillName = repairSkill.value.name
+  try {
+    const ok = await app.mutate(
+      () =>
+        api.refreshSnapshot(repairSkill.value!.id, previewData.revision, previewData.contentDigest),
+      `已重新收录「${skillName}」当前内容`,
+    )
+    if (ok) {
+      localError.value = ''
+      repairPreview.value = null
+      await app.refresh(true)
+      if (targetIds.value.length > 0) {
+        await preview()
+      }
+    } else {
+      localError.value = app.error || '重新收录失败，请重试'
+    }
+  } catch (err) {
+    localError.value = err instanceof Error ? err.message : '重新收录失败'
+  } finally {
+    repairing.value = false
+  }
+}
+function cancelRepair() {
+  repairPreview.value = null
 }
 async function submit() {
   if (!plan.value || busy.value) return
@@ -303,17 +375,13 @@ async function submit() {
                 <span class="source-caption">当前来源</span>
                 <strong>{{ item.previousSource }}</strong>
                 <span class="source-version">分发记录版本：{{ item.replacement.version }}</span>
-                <p class="source-path mono">
-                  {{ item.replacement.entityPath }}
-                </p>
+                <p class="source-path mono">{{ item.replacement.entityPath }}</p>
               </div>
               <div class="source-panel source-panel-next">
                 <span class="source-caption">切换到</span>
                 <strong>{{ item.sourceName }}</strong>
                 <span class="source-version">来源记录版本：{{ item.replacement.nextVersion }}</span>
-                <p class="source-path mono">
-                  {{ item.replacement.nextEntityPath }}
-                </p>
+                <p class="source-path mono">{{ item.replacement.nextEntityPath }}</p>
               </div>
             </div>
             <div class="plan-comparison-meta">
@@ -357,7 +425,62 @@ async function submit() {
         <AlertTriangle aria-hidden="true" />
         <span>部分分发需确认来源切换或处理冲突，请查看条目标记。</span>
       </div>
-      <p v-if="localError" class="field-error" role="alert">{{ localError }}</p>
+      <div
+        v-if="localError && repairSkill"
+        class="callout warning distribution-repair-callout"
+        role="alert"
+      >
+        <div class="repair-callout-header">
+          <AlertTriangle class="repair-callout-icon" aria-hidden="true" />
+          <div class="repair-callout-msg">{{ localError }}</div>
+        </div>
+        <div class="repair-action-container">
+          <template v-if="!repairPreview">
+            <div class="repair-action-row">
+              <span class="repair-hint"
+                >检测到本地文件已有更新或快照漂移，可重新收录最新内容：</span
+              >
+              <Button
+                size="sm"
+                variant="secondary"
+                :disabled="busy || preparingRepair || repairing"
+                @click="prepareRepair"
+              >
+                <RefreshCw :class="{ spin: preparingRepair }" aria-hidden="true" />
+                {{ preparingRepair ? '正在检查当前文件…' : '重新收录当前内容' }}
+              </Button>
+            </div>
+          </template>
+          <template v-else>
+            <div class="repair-confirm-row">
+              <div class="repair-desc">
+                来源包包含 <strong>{{ repairPreview.skillCount }}</strong> 个
+                Skill，将以当前磁盘文件生成新快照（保留旧版本与现有链接）。
+              </div>
+              <div class="repair-btn-group">
+                <Button
+                  size="sm"
+                  variant="primary"
+                  :disabled="busy || repairing"
+                  @click="confirmRepair"
+                >
+                  <RefreshCw :class="{ spin: repairing }" aria-hidden="true" />
+                  {{ repairing ? '正在收录…' : '确认收录并重新预览' }}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  :disabled="busy || repairing"
+                  @click="cancelRepair"
+                >
+                  取消
+                </Button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+      <p v-else-if="localError" class="field-error" role="alert">{{ localError }}</p>
     </template>
     <template
       #options
@@ -610,6 +733,68 @@ async function submit() {
 }
 .distribution-notice svg {
   margin-top: 3px;
+}
+.distribution-repair-callout {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 10px 14px;
+}
+.repair-callout-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.repair-callout-icon {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.repair-callout-msg {
+  font-size: 13px;
+  line-height: 1.4;
+  word-break: break-all;
+}
+.repair-action-container {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.repair-action-row,
+.repair-confirm-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.repair-hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  flex: 1;
+  min-width: 200px;
+}
+.repair-desc {
+  font-size: 12px;
+  line-height: 1.4;
+  flex: 1;
+  min-width: 220px;
+}
+.repair-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 @container (max-width: 520px) {
   .source-comparison {

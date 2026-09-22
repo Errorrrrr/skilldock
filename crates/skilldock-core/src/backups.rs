@@ -511,7 +511,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let engine = Engine::new(Some(temp.path().join("config"))).unwrap();
         engine
-            .configure(temp.path().join("library").to_str().unwrap())
+            .configure_legacy_fixture(temp.path().join("library").to_str().unwrap())
             .unwrap();
         engine
             .transact("test", "isolate configured scan roots", |state, _, _| {
@@ -1042,7 +1042,7 @@ mod edge_tests {
         let base = fs::canonicalize(temp.path()).unwrap();
         let engine = Engine::new(Some(base.join("config"))).unwrap();
         engine
-            .configure(base.join("library").to_str().unwrap())
+            .configure_legacy_fixture(base.join("library").to_str().unwrap())
             .unwrap();
         let parent = base.join("agent/parent");
         let child = parent.join("child");

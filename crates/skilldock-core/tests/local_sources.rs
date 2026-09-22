@@ -85,7 +85,7 @@ async fn reference_source_preserves_original_links_and_other_claims() {
     assert_eq!(state["sources"][0]["updatesRemoved"], true);
     assert!(alpha.join("SKILL.md").is_file());
     assert!(
-        fs::read_dir(library.join("objects"))
+        fs::read_dir(library.join(".skilldock/objects"))
             .unwrap()
             .next()
             .is_none()

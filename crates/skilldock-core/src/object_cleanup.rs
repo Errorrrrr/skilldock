@@ -141,8 +141,16 @@ impl Engine {
             }
         }
         for source in &state.sources {
+            if state.schema_version >= 3 && !state.skills.iter().any(|s| s.source_id == source.id) {
+                continue;
+            }
             used.entry(source.version.clone())
                 .or_insert_with(|| format!("来源「{}」仍在使用", source.name));
+        }
+        for backup in &state.content_backups {
+            for skill in &backup.skills {
+                used.insert(skill.bundle_digest.clone(), "最近一次更新的恢复备份".into());
+            }
         }
         for journal in self.all_journals(root)? {
             if ignore == Some(journal.id.as_str()) {
@@ -164,7 +172,10 @@ impl Engine {
                     .iter()
                     .any(|task| task.id == journal.id && task.status == "success");
             for old in journal.before.skills.iter().chain(&journal.after.skills) {
-                if unsettled || state.skills.iter().any(|skill| skill.id == old.id) {
+                if unsettled
+                    || (state.schema_version < 3
+                        && state.skills.iter().any(|skill| skill.id == old.id))
+                {
                     used.entry(old.bundle_digest.clone()).or_insert_with(|| {
                         if unsettled {
                             "未完成事务仍需要此版本".into()
@@ -202,11 +213,12 @@ impl Engine {
                     "committed" | "pruning" | "running" | "needsRecovery"
                 )
             {
-                for c in journal
-                    .changes
-                    .iter()
-                    .filter(|c| c.backup.is_some() && !c.restore)
-                {
+                for c in journal.changes.iter().filter(|c| {
+                    c.backup
+                        .as_ref()
+                        .is_some_and(|p| state.schema_version < 3 || p.exists())
+                        && !c.restore
+                }) {
                     if let Some(binding) = journal
                         .after
                         .bindings
@@ -596,7 +608,7 @@ impl Engine {
             scan_roots: Self::scan_roots(before, changes),
         })
     }
-    fn history_cleanup_plan(
+    pub(crate) fn history_cleanup_plan(
         &self,
         root: &Path,
         state: &Snapshot,
@@ -954,7 +966,7 @@ mod tests {
         let base = fs::canonicalize(temp.path()).unwrap();
         let engine = Engine::new(Some(base.join("config"))).unwrap();
         engine
-            .configure(base.join("library").to_str().unwrap())
+            .configure_legacy_fixture(base.join("library").to_str().unwrap())
             .unwrap();
         engine
             .transact("test", "isolate configured scan roots", |state, _, _| {

@@ -15,7 +15,20 @@ export type SkillPackage = { remote: boolean, missingMemberIds: Array<string>, i
 export type PresetPackage = { presetId: string, packageId: string, autoAdd: boolean, excludedIds: Array<string>, selectedIds: Array<string>, };
 export type PresetApplication = { presetId: string, targetId: string, follow: boolean, appliedRevision: number, error: string, };
 export type ExternalInstallation = { skillId: string, targetId: string, path: string, entityPath: string, };
-export type Snapshot = { skillEntityPaths?: { [key in string]?: string }, unmanagedTargetPaths: Array<string>, packages: Array<SkillPackage>, presetPackages: Array<PresetPackage>, presetApplications: Array<PresetApplication>, externalInstallations: Array<ExternalInstallation>, initialized: boolean, storageRoot: string, revision: number, skills: Array<Skill>, sources: Array<Source>, targets: Array<Target>, bindings: Array<Binding>, presets: Array<Preset>, tasks: Array<Task>, settings: Settings, schemaVersion: number, };
+export type ContentBackup = { addedSkillIds: Array<string>, sourceId: string, createdAt: string, skills: Array<Skill>, };
+export type Snapshot = {
+/**
+ * 最近一次更新前的完整来源成员；只用于撤销更新，不提供版本分发。
+ */
+contentBackups: Array<ContentBackup>,
+/**
+ * 合并收录时保留来源追溯，不创建额外实体。
+ */
+skillOrigins: { [key in string]?: Array<string> },
+/**
+ * 名称入口的所有权清单，禁止覆盖用户自行放入的文件。
+ */
+libraryEntries: { [key in string]?: string }, skillEntityPaths?: { [key in string]?: string }, unmanagedTargetPaths: Array<string>, packages: Array<SkillPackage>, presetPackages: Array<PresetPackage>, presetApplications: Array<PresetApplication>, externalInstallations: Array<ExternalInstallation>, initialized: boolean, storageRoot: string, revision: number, skills: Array<Skill>, sources: Array<Source>, targets: Array<Target>, bindings: Array<Binding>, presets: Array<Preset>, tasks: Array<Task>, settings: Settings, schemaVersion: number, };
 export type ScanItem = { path: string, name: string, description: string, status: string, error: string, };
 export type ScanResult = { root: string, items: Array<ScanItem>, warnings: Array<string>, };
 export type CatalogItem = { slug: string, name: string, description: string, version: string, site: string, };

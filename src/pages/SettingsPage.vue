@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import SingleContentSettings from '@/components/SingleContentSettings.vue'
+import { libraryDirectory } from '@/services/librarySkills'
 import AppUpdatePanel from '@/components/AppUpdatePanel.vue'
 import { useAppUpdater } from '@/composables/useAppUpdater'
 import AgentDirectories from '@/components/AgentDirectories.vue'
@@ -184,8 +186,16 @@ async function saveSettings() {
   )
 }
 function startMigrate() {
-  newPath.value = app.snapshot?.storageRoot || ''
+  newPath.value = libraryDirectory(app.snapshot)
   migrateOpen.value = true
+}
+async function openSkillsFolder() {
+  if (!app.snapshot?.storageRoot) return
+  try {
+    await api.openDirectory(libraryDirectory(app.snapshot))
+  } catch (error) {
+    app.error = error instanceof Error ? error.message : String(error)
+  }
 }
 async function migrate() {
   busy.value = true
@@ -290,10 +300,27 @@ const themeOptions = [
           </div>
           <div class="settings-row">
             <div>
+              <SingleContentSettings />
               <h4>当前统一目录</h4>
-              <p class="mono">{{ app.snapshot?.storageRoot || '尚未配置' }}</p>
+              <p class="mono">{{ libraryDirectory(app.snapshot) || '尚未配置' }}</p>
+              <p
+                class="field-hint"
+                style="margin-top: 4px; font-size: 13px; color: var(--text-muted)"
+              >
+                每个 Skill 按名称直接浏览，所有工具共用当前内容；内部存储与恢复记录由应用管理。
+              </p>
             </div>
-            <Button @click="startMigrate"><FolderOpen />修改位置</Button>
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
+              <Button
+                v-if="app.snapshot?.storageRoot"
+                variant="ghost"
+                title="在访达或文件管理器中打开直观的技能目录"
+                @click="openSkillsFolder"
+              >
+                <FolderOpen />打开技能目录
+              </Button>
+              <Button @click="startMigrate"><FolderOpen />修改位置</Button>
+            </div>
           </div>
           <div class="settings-row">
             <div>
@@ -476,7 +503,7 @@ const themeOptions = [
         ><Button @click="migrateOpen = false">取消</Button
         ><Button
           variant="primary"
-          :disabled="!newPath.trim() || newPath === app.snapshot?.storageRoot"
+          :disabled="!newPath.trim() || newPath === libraryDirectory(app.snapshot)"
           @click="migrateConfirm = true"
           >继续确认</Button
         ></template

@@ -181,6 +181,7 @@ impl Engine {
         let selected: BTreeSet<_> = selected.into_iter().collect();
         let mut package_id = String::new();
         let mut selected_ids = vec![];
+        let mut selected_members = vec![];
         let mut preset_id = String::new();
         self.transact(
             "import_git_package",
@@ -377,12 +378,20 @@ impl Engine {
                     s.presets.retain(|p| p.id != preset_id);
                     s.presets.push(preset);
                 }
+                selected_members = s
+                    .skills
+                    .iter()
+                    .filter(|skill| selected_ids.contains(&skill.id))
+                    .cloned()
+                    .collect::<Vec<_>>();
                 Ok(())
             },
         )?;
         self.reconcile_packages()?;
+        let state = self.snapshot()?;
+        let selected_ids = single_content::resolve_import_ids(&selected_members, &state);
         Ok(
-            json!({"snapshot":self.snapshot()?,"packageId":package_id,"skillIds":selected_ids,"presetId":preset_id}),
+            json!({"snapshot":state,"packageId":package_id,"skillIds":selected_ids,"presetId":preset_id}),
         )
     }
 }

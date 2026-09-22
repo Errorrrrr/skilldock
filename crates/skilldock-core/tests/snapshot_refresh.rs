@@ -20,11 +20,14 @@ async fn refresh_preserves_old_links_and_distributes_after_finder_changes() {
     )
     .unwrap();
     fs::write(source.join(".DS_Store"), "old Finder settings").unwrap();
-    engine.configure(root.to_str().unwrap()).unwrap();
+    let configured = engine.configure(root.to_str().unwrap()).unwrap();
+    let root = std::path::PathBuf::from(configured.storage_root);
     let mut state = engine.execute(json!({"action":"import_folder","path":source,"selectedPaths":[source.join("contact")],"adopt":false})).await.unwrap();
     // New imports ignore Finder metadata. Construct the legacy snapshot explicitly
     // so this regression still exercises repair of an old full-tree digest.
     let legacy_digest = files::snapshot_tree(&root, &source).unwrap();
+    state["schemaVersion"] = json!(2);
+    state["libraryEntries"] = json!({});
     state["skills"][0]["bundleDigest"] = json!(legacy_digest);
     state["skills"][0]["version"] = json!(&legacy_digest[..12]);
     state["sources"][0]["version"] = json!(legacy_digest);
@@ -98,4 +101,44 @@ fn finder_metadata_is_ignored_only_for_regular_files() {
     fs::create_dir(base.join(".DS_Store")).unwrap();
     fs::write(base.join(".DS_Store/script.sh"), "payload").unwrap();
     assert!(!files::snapshot_matches(temp.path(), &digest).unwrap());
+}
+
+#[tokio::test]
+async fn skills_view_is_maintained_automatically() {
+    let temp = tempfile::tempdir().unwrap();
+    let base = fs::canonicalize(temp.path()).unwrap();
+    let engine = Engine::new(Some(base.join("config"))).unwrap();
+    let root = base.join("library");
+    let source = base.join("source");
+    fs::create_dir_all(source.join("calculator")).unwrap();
+    fs::write(
+        source.join("calculator/SKILL.md"),
+        "---\nname: calculator\ndescription: math tool\n---\n# Calculator",
+    )
+    .unwrap();
+
+    engine.configure(root.to_str().unwrap()).unwrap();
+    assert!(root.join(".skilldock").is_dir());
+
+    let state = engine
+        .execute(json!({
+            "action": "import_folder",
+            "path": source,
+            "selectedPaths": [source.join("calculator")],
+            "adopt": false
+        }))
+        .await
+        .unwrap();
+
+    let digest = state["skills"][0]["bundleDigest"].as_str().unwrap();
+    let object_dir = root.join(".skilldock/objects").join(digest);
+
+    // Verify the current Skill is directly accessible by name.
+    let skill_link = root.join("calculator");
+    assert!(skill_link.exists(), "calculator symlink should exist");
+    assert_eq!(
+        fs::read_link(&skill_link).unwrap(),
+        object_dir.join("tree/calculator")
+    );
+    assert!(skill_link.join("SKILL.md").is_file());
 }

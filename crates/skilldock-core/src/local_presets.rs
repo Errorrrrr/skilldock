@@ -177,6 +177,7 @@ impl Engine {
             return fail("部分所选 Skill 已变化或不在可导入范围，请重新扫描");
         }
         let mut member_ids = vec![];
+        let mut selected_members = vec![];
         let state = self.transact(
             "preset_members",
             "添加本地包成员",
@@ -365,9 +366,16 @@ impl Engine {
                                 .any(|skill| skill.source_id == source_id)
                     });
                 }
+                selected_members = state
+                    .skills
+                    .iter()
+                    .filter(|skill| member_ids.contains(&skill.id))
+                    .cloned()
+                    .collect::<Vec<_>>();
                 Ok(())
             },
         )?;
+        let member_ids = single_content::resolve_import_ids(&selected_members, &state);
         Ok(json!({"snapshot":state,"skillIds":member_ids}))
     }
 }

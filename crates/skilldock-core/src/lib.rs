@@ -11,6 +11,7 @@ mod operations;
 mod packages;
 mod portable;
 mod schedule;
+mod single_content;
 mod source_binding;
 mod system_proxy;
 
@@ -98,6 +99,27 @@ pub(crate) fn binding_matches(root: &Path, binding: &Binding) -> bool {
 }
 
 impl Engine {
+    #[cfg(test)]
+    pub(crate) fn configure_legacy_fixture(&self, path: &str) -> Result<Snapshot> {
+        let mut state = self.configure(path)?;
+        let internal = PathBuf::from(&state.storage_root);
+        let public = internal.parent().unwrap().to_path_buf();
+        for entry in fs::read_dir(&internal)? {
+            let entry = entry?;
+            fs::rename(entry.path(), public.join(entry.file_name()))?;
+        }
+        fs::remove_dir(internal)?;
+        state.schema_version = 2;
+        state.storage_root = public.display().to_string();
+        files::atomic_json(&public.join("state.json"), &state)?;
+        files::atomic_json(
+            &self.config_dir.join("config.json"),
+            &Config {
+                storage_root: state.storage_root.clone(),
+            },
+        )?;
+        Ok(state)
+    }
     pub fn update_guard(&self) -> Result<fs::File> {
         self.lock()
     }
@@ -158,7 +180,7 @@ impl Engine {
         }
         Self::refresh_python_diagnostics(&mut state);
         Self::observe_installations(&mut state);
-        if !matches!(state.schema_version, 1 | 2) {
+        if !matches!(state.schema_version, 1 | 2 | 3) {
             return fail("数据版本不兼容，请升级 SkillDock");
         }
         if state.storage_root != root.display().to_string() {
@@ -220,11 +242,14 @@ impl Engine {
         fs::create_dir_all(&root)?;
         let root = fs::canonicalize(root)?;
         Self::check_root(&root)?;
+        let root = root.join(".skilldock");
+        fs::create_dir_all(&root)?;
         for sub in ["objects", "transactions", "backups", "cache", "trash"] {
             fs::create_dir_all(root.join(sub))?;
         }
         let mut state = Snapshot::empty(root.display().to_string());
         state.initialized = true;
+        state.schema_version = 3;
         files::atomic_json(&root.join("state.json"), &state)?;
         files::atomic_json(
             &self.config_dir.join("config.json"),
@@ -326,10 +351,12 @@ impl Engine {
             return fail("请先恢复未完成的文件事务");
         }
         let mut after = before.clone();
-        after.schema_version = 2;
+        after.schema_version = before.schema_version.max(2);
         let mut changes = vec![];
         let mut object_cleanup = None;
         mutate(&mut after, &root, &mut changes, &mut object_cleanup)?;
+        single_content::finalize(&before, &mut after, &root, &mut changes, kind)?;
+        single_content::plan_entries(&before, &mut after, &root, &mut changes)?;
         let task_id = id();
         after.revision = before
             .revision
@@ -430,6 +457,54 @@ impl Engine {
             }
             files::atomic_json(&root.join("state.json"), &after)?;
         }
+        let retained_digests = after
+            .skills
+            .iter()
+            .chain(after.content_backups.iter().flat_map(|b| &b.skills))
+            .map(|s| &s.bundle_digest)
+            .collect::<std::collections::BTreeSet<_>>();
+        let retired_content = before
+            .skills
+            .iter()
+            .chain(before.content_backups.iter().flat_map(|b| &b.skills))
+            .any(|s| !s.bundle_digest.is_empty() && !retained_digests.contains(&s.bundle_digest));
+        if after.schema_version >= 3
+            && journal.object_cleanup.is_none()
+            && (retired_content
+                || kind == "enable_single_content"
+                || (kind == "add_target" && !journal.changes.is_empty()))
+        {
+            // Cleanup is forward-only and starts only after the new content is committed.
+            let cleanup = (|| -> Result<()> {
+                let (plan, scan) = self.history_cleanup_plan(&root, &after)?;
+                let choices = plan
+                    .items
+                    .iter()
+                    .filter(|item| item.status == "ready")
+                    .map(|item| object_cleanup::CleanupChoice {
+                        digest: item.digest.clone(),
+                        fingerprint: item.fingerprint.clone(),
+                    })
+                    .collect::<Vec<_>>();
+                if !choices.is_empty() {
+                    journal.object_cleanup =
+                        Some(self.prepare_object_cleanup(&root, &scan, &[], &plan, choices)?);
+                    files::atomic_json(&journal_path, &journal)?;
+                }
+                Ok(())
+            })();
+            if let Err(error) = cleanup {
+                after.tasks.push(Task {
+                    id: id(),
+                    kind: "object_cleanup_plan".into(),
+                    title: "当前内容已保存，旧内容清理未完成".into(),
+                    status: "failed".into(),
+                    message: format!("{error}；可在设置中重新预览并清理旧内容"),
+                    created_at: now(),
+                });
+                files::atomic_json(&root.join("state.json"), &after)?;
+            }
+        }
         if journal.object_cleanup.is_some() {
             // Forward-only cleanup: never enter the file-transaction undo branch.
             self.run_object_cleanup(&root, &after, &mut journal)?;
@@ -510,6 +585,25 @@ impl Engine {
     async fn execute_request(&self, request: Value) -> Result<Value> {
         let action = text(&request, "action")?.to_string();
         match action.as_str() {
+            "preview_single_content" => self.preview_single_content(),
+            "arrange_library" => {
+                let state = self.snapshot()?;
+                if state.schema_version < 3 {
+                    return fail("请先确认单一内容迁移");
+                }
+                if Path::new(&state.storage_root)
+                    .file_name()
+                    .is_some_and(|n| n == ".skilldock")
+                {
+                    return Ok(serde_json::to_value(state)?);
+                }
+                Ok(serde_json::to_value(
+                    self.migrate_storage(&state.storage_root)?,
+                )?)
+            }
+            "enable_single_content" => self.enable_single_content(&request),
+            "undo_content_update" => self.undo_content_update(&request),
+            "replace_current_content" => self.replace_current_content(&request),
             "preview_bind_source" => self.bind_source(&request, true).await,
             "bind_source" => self.bind_source(&request, false).await,
             "preview_git_package" => self.preview_git_package(&request).await,
@@ -563,6 +657,9 @@ impl Engine {
                     .find(|s| s.id == sid)
                     .cloned()
                     .ok_or_else(|| error::Error::Message("Skill 不存在".into()))?;
+                if state.schema_version >= 3 {
+                    return fail("当前模式不提供历史版本分发，请使用撤销上次更新");
+                }
                 let mut versions = vec![current];
                 for entry in fs::read_dir(Path::new(&state.storage_root).join("transactions"))? {
                     let path = entry?.path();

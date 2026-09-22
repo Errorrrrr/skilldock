@@ -42,6 +42,7 @@ export function skillDistributionChoices(members: Skill[], snapshot: Snapshot): 
 }
 
 export function skillEntityLabel(skill: Skill, snapshot: Snapshot): string {
+  if (snapshot.schemaVersion >= 3) return skill.externalPath ? '本地引用' : '统一库当前内容'
   const key = skillEntityKey(skill, snapshot)
   const managed = snapshot.skills.find(
     (member) => !member.externalPath && skillEntityKey(member, snapshot) === key,
@@ -62,9 +63,10 @@ export function librarySkills(snapshot: Snapshot | null): LibrarySkill[] {
   if (!snapshot) return []
   const groups = new Map<string, Skill[]>()
   for (const skill of snapshot.skills) {
-    const members = groups.get(skill.name) ?? []
+    const key = snapshot.schemaVersion >= 3 ? skill.id : skill.name
+    const members = groups.get(key) ?? []
     members.push(skill)
-    groups.set(skill.name, members)
+    groups.set(key, members)
   }
   return [...groups.values()].map((members) => {
     // Prefer a managed library snapshot; keep the representative stable across refreshes.
@@ -83,7 +85,10 @@ export function librarySkills(snapshot: Snapshot | null): LibrarySkill[] {
       memberIds,
       entityCount,
       needsSourceChoice: entityCount > 1,
-      sourceSummary: `${members.length} 条来源记录 · ${entityCount === 1 ? '同一实体' : `${entityCount} 个分发候选`}`,
+      sourceSummary:
+        snapshot.schemaVersion >= 3
+          ? `当前内容 · ${snapshot.skillOrigins[members[0]!.id]?.length || 1} 个收录来源`
+          : `${members.length} 条来源记录 · ${entityCount === 1 ? '同一实体' : `${entityCount} 个分发候选`}`,
       memberSummary: members
         .map((member) => {
           const source = snapshot.sources.find((source) => source.id === member.sourceId)
@@ -122,4 +127,9 @@ export function librarySkills(snapshot: Snapshot | null): LibrarySkill[] {
       }),
     }
   })
+}
+
+export function libraryDirectory(snapshot: Snapshot | null): string {
+  if (!snapshot) return ''
+  return snapshot.storageRoot.replace(/[\\/]\.skilldock$/, '')
 }

@@ -8,7 +8,8 @@ async fn daily_policy_persists_validates_and_can_switch_back() {
     let temp = tempfile::tempdir().unwrap();
     let engine = Engine::new(Some(temp.path().join("config"))).unwrap();
     let library = temp.path().join("library");
-    engine.configure(library.to_str().unwrap()).unwrap();
+    let configured = engine.configure(library.to_str().unwrap()).unwrap();
+    let library = std::path::PathBuf::from(configured.storage_root);
     let mut snapshot = engine.snapshot().unwrap();
     snapshot.sources.push(serde_json::from_value(json!({
         "id":"daily", "name":"Daily test", "kind":"git", "path":"", "url":"https://example.com/skills.git",

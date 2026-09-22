@@ -247,6 +247,7 @@ impl Engine {
         }
         let mut package_id = String::new();
         let mut ids = vec![];
+        let mut selected_members = vec![];
         let state = self.transact(
             "import_package",
             "登记并同步 Skill 包",
@@ -339,9 +340,16 @@ impl Engine {
                 });
                 Self::refresh_package_members(s);
                 ids = Self::package_selected_ids(s, &package_id, request)?;
+                selected_members = s
+                    .skills
+                    .iter()
+                    .filter(|skill| ids.contains(&skill.id))
+                    .cloned()
+                    .collect::<Vec<_>>();
                 Ok(())
             },
         )?;
+        let ids = single_content::resolve_import_ids(&selected_members, &state);
         Ok(json!({"snapshot":state,"packageId":package_id,"skillIds":ids}))
     }
     fn sync_registered_package(
@@ -386,6 +394,7 @@ impl Engine {
             prepared.push((scope.clone(), origin, view, path, digest, entries));
         }
         let mut ids = vec![];
+        let mut selected_members = vec![];
         self.transact("sync_package", "同步原包成员变化", |s, root, _| {
             if request.get("revision").and_then(Value::as_u64) != Some(s.revision as u64) {
                 return fail("资料库已变化，请重新扫描");
@@ -457,10 +466,18 @@ impl Engine {
                 Self::update_package_presets(s, &scope.source_id);
             }
             ids = Self::package_selected_ids(s, &package.id, request)?;
+            selected_members = s
+                .skills
+                .iter()
+                .filter(|skill| ids.contains(&skill.id))
+                .cloned()
+                .collect::<Vec<_>>();
             Ok(())
         })?;
         self.reconcile_packages()?;
-        Ok(json!({"snapshot":self.snapshot()?,"packageId":package.id,"skillIds":ids}))
+        let state = self.snapshot()?;
+        let ids = single_content::resolve_import_ids(&selected_members, &state);
+        Ok(json!({"snapshot":state,"packageId":package.id,"skillIds":ids}))
     }
     fn package_selected_ids(
         state: &Snapshot,
@@ -647,9 +664,14 @@ impl Engine {
                             .skill_ids
                             .iter()
                             .map(|id| {
-                                preset.locks.get(id).cloned().ok_or_else(|| {
-                                    error::Error::Message("预设锁定成员不存在".into())
-                                })
+                                preset
+                                    .locks
+                                    .get(id)
+                                    .or_else(|| s.skills.iter().find(|skill| &skill.id == id))
+                                    .cloned()
+                                    .ok_or_else(|| {
+                                        error::Error::Message("预设锁定成员不存在".into())
+                                    })
                             })
                             .collect::<Result<Vec<_>>>()?;
                         if !skills.is_empty() {

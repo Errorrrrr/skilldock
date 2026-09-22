@@ -18,6 +18,7 @@ fn main() {
         PresetPackage::decl(),
         PresetApplication::decl(),
         ExternalInstallation::decl(),
+        ContentBackup::decl(),
         Snapshot::decl(),
         ScanItem::decl(),
         ScanResult::decl(),
@@ -35,6 +36,12 @@ fn main() {
             .collect::<Vec<_>>()
             .join("\n")
     );
+    let output = output
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/services/types.ts");
     if std::env::args().any(|arg| arg == "--check") {
         assert_eq!(

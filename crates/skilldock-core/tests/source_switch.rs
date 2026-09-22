@@ -42,7 +42,14 @@ impl F {
         let temp = tempfile::tempdir().unwrap();
         let base = fs::canonicalize(temp.path()).unwrap();
         let e = Engine::new(Some(base.join("config"))).unwrap();
-        e.configure(base.join("library").to_str().unwrap()).unwrap();
+        let mut legacy = e.configure(base.join("library").to_str().unwrap()).unwrap();
+        // Existing libraries keep per-target source choices until explicit migration.
+        legacy.schema_version = 2;
+        skilldock_core::files::atomic_json(
+            &PathBuf::from(&legacy.storage_root).join("state.json"),
+            &legacy,
+        )
+        .unwrap();
         let target = base.join("tool");
         let entry = target.join("legacy-entry");
         skill(&entry, "original");
@@ -126,7 +133,7 @@ impl F {
             .unwrap();
         let new = new_skill["id"].clone();
         let new_entity = if git {
-            base.join("library/objects")
+            base.join("library/.skilldock/objects")
                 .join(new_skill["bundleDigest"].as_str().unwrap())
                 .join("tree")
                 .join(new_skill["relativePath"].as_str().unwrap())

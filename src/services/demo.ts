@@ -13,7 +13,7 @@ import type {
   Target,
 } from './types'
 
-const DEMO_KEY = 'skilldock-demo-v4'
+const DEMO_KEY = 'skilldock-demo-v5'
 const now = () => new Date().toISOString()
 const id = (prefix: string) =>
   `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
@@ -201,12 +201,15 @@ const bindings: Binding[] = bindingSeed.map(([skillId, targetId, claims, follow,
 function freshSnapshot(): Snapshot {
   return {
     initialized: true,
-    schemaVersion: 1,
+    schemaVersion: 3,
+    contentBackups: [],
+    skillOrigins: {},
+    libraryEntries: {},
     packages: [],
     presetPackages: [],
     presetApplications: [],
     externalInstallations: [],
-    storageRoot: '/Users/demo/SkillDock',
+    storageRoot: '/Users/demo/SkillDock/.skilldock',
     revision: 7,
     skills: structuredClone(skills),
     sources: structuredClone(sources),
@@ -262,6 +265,9 @@ function load(): Snapshot {
     saved.settings.catalogSites = normalizeCatalogSites(
       saved.settings.catalogSites || defaultCatalogSites,
     )
+    saved.contentBackups ??= []
+    saved.skillOrigins ??= {}
+    saved.libraryEntries ??= {}
     saved.packages ??= []
     saved.presetPackages ??= []
     saved.presetApplications ??= []
@@ -285,6 +291,20 @@ function load(): Snapshot {
   }
 }
 function save(next: Snapshot) {
+  if (next.schemaVersion >= 3) {
+    for (const preset of next.presets) preset.locks = {}
+    for (const binding of next.bindings) {
+      const skill = next.skills.find((s) => s.id === binding.skillId)
+      if (skill) {
+        binding.digest = skill.bundleDigest
+        binding.version = skill.version
+        binding.relativePath = skill.relativePath
+        binding.externalPath = skill.externalPath
+        binding.follow = true
+      }
+    }
+    for (const application of next.presetApplications) application.follow = true
+  }
   state = next
   localStorage.setItem(DEMO_KEY, JSON.stringify(next))
   return structuredClone(next)
@@ -302,7 +322,8 @@ export async function demoSnapshot() {
 }
 export async function demoConfigure(path: string) {
   state.initialized = true
-  state.storageRoot = path
+  state.storageRoot = `${path}/.skilldock`
+  state.schemaVersion = 3
   task('configure', '配置统一存储目录', `已使用演示目录 ${path}`)
   return save(state)
 }
@@ -826,5 +847,117 @@ export async function demoRemoveUpdateSource(sourceId: string, expectedRevision:
   source.policy.mode = 'off'
   source.nextCheck = ''
   task('remove_update_source', '移除更新管理', source.name)
+  return save(state)
+}
+
+export async function demoPreviewSingleContent() {
+  const groups = new Map<string, Skill[]>()
+  for (const skill of state.skills) {
+    const members = groups.get(skill.name.toLowerCase()) || []
+    members.push(skill)
+    groups.set(skill.name.toLowerCase(), members)
+  }
+  return {
+    revision: state.revision,
+    alreadyEnabled: state.schemaVersion >= 3,
+    groups: [...groups.values()].map((skills) => ({
+      name: skills[0]!.name,
+      skills,
+      identical: skills.every(
+        (s) =>
+          s.bundleDigest === skills[0]!.bundleDigest &&
+          s.relativePath === skills[0]!.relativePath &&
+          s.externalPath === skills[0]!.externalPath,
+      ),
+    })),
+    bindings: structuredClone(state.bindings),
+    presets: structuredClone(state.presets),
+    backupCount: state.contentBackups.length,
+  }
+}
+export async function demoEnableSingleContent(
+  revision: number,
+  choices: { name: string; skillId?: string; keepSeparate?: boolean }[],
+) {
+  if (revision !== state.revision) throw new Error('资料库已变化，请重新预览')
+  const preview = await demoPreviewSingleContent()
+  for (const group of preview.groups) {
+    if (group.skills.length < 2) continue
+    const choice = choices.find((c) => c.name === group.name)
+    if (!group.identical && !choice) throw new Error('请选择当前内容或分别保留')
+    if (choice?.keepSeparate) {
+      for (const skill of group.skills.slice(1)) skill.name += `--${skill.id.slice(0, 8)}`
+      continue
+    }
+    const keep = group.identical ? group.skills[0]!.id : choice!.skillId
+    if (!group.skills.some((s) => s.id === keep)) throw new Error('所选内容不存在')
+    const removed = group.skills.filter((s) => s.id !== keep).map((s) => s.id)
+    for (const binding of state.bindings)
+      if (removed.includes(binding.skillId)) binding.skillId = keep!
+    for (const preset of state.presets)
+      preset.skillIds = [
+        ...new Set(preset.skillIds.map((id) => (removed.includes(id) ? keep! : id))),
+      ]
+    state.skills = state.skills.filter((s) => !removed.includes(s.id))
+  }
+  state.schemaVersion = 3
+  task('enable_single_content', '切换为单一当前内容', '演示数据已统一')
+  return save(state)
+}
+export async function demoArrangeLibrary() {
+  if (!state.storageRoot.endsWith('/.skilldock')) state.storageRoot += '/.skilldock'
+  task('migration', '整理名称目录', '演示目录已整理')
+  return save(state)
+}
+export async function demoUndoContentUpdate(sourceId: string, revision: number) {
+  if (revision !== state.revision) throw new Error('资料库已变化，请重新确认')
+  const backup = state.contentBackups.find((b) => b.sourceId === sourceId)
+  if (!backup) throw new Error('没有可恢复的上次更新')
+  for (const skill of backup.skills) {
+    const index = state.skills.findIndex((s) => s.id === skill.id)
+    if (index >= 0) state.skills[index] = structuredClone(skill)
+  }
+  state.skills = state.skills.filter((s) => !backup.addedSkillIds.includes(s.id))
+  state.bindings = state.bindings.filter((b) => !backup.addedSkillIds.includes(b.skillId))
+  for (const preset of state.presets)
+    preset.skillIds = preset.skillIds.filter((id) => !backup.addedSkillIds.includes(id))
+  state.contentBackups = state.contentBackups.filter((b) => b.sourceId !== sourceId)
+  const source = state.sources.find((s) => s.id === sourceId)
+  if (source) {
+    source.policy.mode = 'notify'
+    source.status = 'available'
+  }
+  task('undo_content_update', '撤销上次更新', '演示内容与目标已恢复')
+  return save(state)
+}
+
+export async function demoReplaceCurrentContent(
+  skillId: string,
+  replacementId: string,
+  revision: number,
+) {
+  if (revision !== state.revision) throw new Error('资料库已变化，请重新确认')
+  const old = state.skills.find((s) => s.id === skillId)
+  const replacement = state.skills.find((s) => s.id === replacementId)
+  if (!old || !replacement || old === replacement) throw new Error('请选择另一份已导入内容')
+  state.contentBackups = state.contentBackups.filter((b) => b.sourceId !== replacement.sourceId)
+  state.contentBackups.push({
+    sourceId: replacement.sourceId,
+    createdAt: now(),
+    skills: [structuredClone(old)],
+    addedSkillIds: [],
+  })
+  state.skills = state.skills
+    .filter((s) => s.id !== replacementId)
+    .map((s) =>
+      s.id === skillId ? { ...structuredClone(replacement), id: skillId, name: old.name } : s,
+    )
+  for (const binding of state.bindings)
+    if (binding.skillId === replacementId) binding.skillId = skillId
+  for (const preset of state.presets)
+    preset.skillIds = [
+      ...new Set(preset.skillIds.map((id) => (id === replacementId ? skillId : id))),
+    ]
+  task('replace_current_content', '替换当前内容', '演示内容与分发已统一')
   return save(state)
 }
