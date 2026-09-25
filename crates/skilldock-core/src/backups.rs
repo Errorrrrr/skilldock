@@ -31,6 +31,9 @@ impl Engine {
             }
             if journal.status == "committed" {
                 kept += 1;
+                // Zero retains no completed adoption batches. The original still
+                // exists until the file transaction commits, and validation below
+                // preserves modified or incomplete copies even with zero retention.
                 if kept <= state.settings.backup_retention {
                     continue;
                 }
@@ -947,10 +950,15 @@ mod tests {
                 .count(),
             1
         );
+        engine
+            .execute_local("settings", &json!({"backupRetention": 0}))
+            .unwrap();
         assert!(
             engine
-                .execute_local("settings", &json!({"backupRetention": 0}))
-                .is_err()
+                .list_backups()
+                .unwrap()
+                .iter()
+                .all(|backup| backup.status == "expired")
         );
     }
     #[test]
@@ -1032,6 +1040,10 @@ mod tests {
         assert!(change.backup.unwrap().is_dir());
     }
 }
+
+#[cfg(test)]
+#[path = "backup_retention_tests.rs"]
+mod retention_tests;
 
 #[cfg(test)]
 mod edge_tests {

@@ -125,6 +125,11 @@ fn is_skill_resource(path: &Path) -> bool {
 }
 
 pub fn metadata(path: &Path) -> Result<(String, String)> {
+    let fallback = path.file_name().and_then(|s| s.to_str()).unwrap_or("skill");
+    metadata_with_fallback(path, fallback)
+}
+
+pub(crate) fn metadata_with_fallback(path: &Path, fallback: &str) -> Result<(String, String)> {
     if !has_skill_entry(path) {
         return fail("目录缺少精确命名的 SKILL.md 入口，普通 skill.md 资料不作为成员");
     }
@@ -134,7 +139,6 @@ pub fn metadata(path: &Path) -> Result<(String, String)> {
         return fail("SKILL.md 超过 1 MiB 限制");
     }
     let text = fs::read_to_string(file)?;
-    let fallback = path.file_name().and_then(|s| s.to_str()).unwrap_or("skill");
     let normalized = text.trim_start_matches('\u{feff}').replace("\r\n", "\n");
     let (name, description) = if let Some(rest) = normalized.strip_prefix("---\n") {
         let end = rest

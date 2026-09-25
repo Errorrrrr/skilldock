@@ -314,7 +314,19 @@ fn build_plan(
     let root = Path::new(&s.storage_root);
     let mut items = vec![];
     let mut paths = BTreeSet::new();
+    let mut logical_names = BTreeSet::new();
     let mut comparisons = BTreeMap::new();
+    // A filesystem alias does not rename SKILL.md. Check the actual declaration
+    // so separately stored alternatives cannot silently shadow each other.
+    let declared_names: BTreeMap<_, _> = s
+        .skills
+        .iter()
+        .chain(skills)
+        .map(|skill| {
+            let name = declared_skill_name(root, skill);
+            (skill.id.clone(), name.to_lowercase())
+        })
+        .collect();
     for target_id in targets {
         let target = s
             .targets
@@ -337,7 +349,8 @@ fn build_plan(
                 .filter(|b| {
                     b.target_id == target.id
                         && s.skills.iter().any(|old| {
-                            old.id == b.skill_id && old.name.eq_ignore_ascii_case(&skill.name)
+                            old.id == b.skill_id
+                                && declared_names.get(&old.id) == declared_names.get(&skill.id)
                         })
                 })
                 .collect();
@@ -365,6 +378,9 @@ fn build_plan(
                 action: "create".into(),
                 error: String::new(),
             };
+            if !logical_names.insert((target.id.clone(), declared_names[&skill.id].clone())) {
+                item.error = "所选 Skill 声明同名，请为此工具只选择一个实现".into();
+            }
             let same_local_link = skill.external_path.is_some()
                 && fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink())
                 && fs::canonicalize(&path).ok().is_some_and(|entity| {
@@ -1547,9 +1563,9 @@ impl Engine {
                         if let Some(value) = r.get("backupRetention") {
                             let count = value
                                 .as_u64()
-                                .filter(|n| (1..=100).contains(n))
+                                .filter(|n| *n <= 100)
                                 .ok_or_else(|| {
-                                    error::Error::Message("备份保留次数应为 1–100 的整数".into())
+                                    error::Error::Message("备份保留次数应为 0–100 的整数".into())
                                 })?;
                             s.settings.backup_retention = count as u32;
                         }

@@ -95,7 +95,7 @@ async function retryCleanup(id: string) {
   busy.value = false
   await refresh()
 }
-const retention = ref(3)
+const retention = ref(0)
 const busy = ref(false)
 const error = ref('')
 const labels: Record<string, string> = {
@@ -122,14 +122,14 @@ async function refresh() {
 watch(
   () => app.snapshot?.revision,
   () => {
-    retention.value = app.snapshot?.settings.backupRetention ?? 3
+    retention.value = app.snapshot?.settings.backupRetention ?? 0
     void refresh()
   },
   { immediate: true },
 )
 async function save() {
   busy.value = true
-  await app.mutate(() => api.settings({ backupRetention: retention.value }), '备份保留次数已保存')
+  await app.mutate(() => api.settings({ backupRetention: retention.value }), '原目录留存设置已保存')
   busy.value = false
   await refresh()
 }
@@ -160,22 +160,22 @@ async function restore(includeCleanup = true) {
   <section class="panel backup-panel">
     <div class="backup-heading">
       <div>
-        <h2 class="section-title">归集备份</h2>
-        <p class="page-subtitle">相同时间（精确到分钟）的备份归为一组，展开查看目录与恢复状态。</p>
+        <h2 class="section-title">恢复与清理</h2>
+        <p class="page-subtitle">管理归集后的原目录留存，查看历史恢复记录和统一库残留。</p>
       </div>
       <div class="backup-controls">
-        <label for="backup-retention">保留最近</label
+        <label for="backup-retention">原目录保留最近</label
         ><input
           id="backup-retention"
           v-model.number="retention"
           type="number"
-          min="1"
+          min="0"
           max="100"
           step="1"
           class="input"
         /><span>批次</span
         ><Button
-          :disabled="busy || !Number.isInteger(retention) || retention < 1 || retention > 100"
+          :disabled="busy || !Number.isInteger(retention) || retention < 0 || retention > 100"
           @click="save"
           >保存</Button
         >
@@ -183,8 +183,13 @@ async function restore(includeCleanup = true) {
     </div>
     <div class="backup-data-scroll">
       <p class="muted">
-        默认 3
-        批次，按归集操作计数。时间分组仅用于展示。保存后及归集完成后自动清理超额备份；异常备份保留并记录原因。统一库副本不受此设置影响。
+        新库默认为
+        0：归集成功并校验后清理临时原目录，不长期保留副本。操作失败或中断时仍可恢复，每个来源的“撤销上次更新”也不受影响。
+      </p>
+      <p class="muted">
+        旧库沿用已有设置。设为 1–100
+        可保留最近若干次归集的原目录；修改设置并保存后立即清理超额留存，改为 0
+        会清理全部可安全删除的旧副本。异常或已修改的副本继续保留并记录原因。
       </p>
       <Button
         v-if="
@@ -194,8 +199,8 @@ async function restore(includeCleanup = true) {
           )
         "
         :disabled="app.loading"
-        @click="app.mutate(() => api.retryBackupCleanup(), '已重新检查旧备份清理，请查看任务结果')"
-        >重试备份清理</Button
+        @click="app.mutate(() => api.retryBackupCleanup(), '已重新检查原目录留存，请查看任务结果')"
+        >重试原目录清理</Button
       >
       <div class="cleanup-heading">
         <Button :disabled="busy || app.loading" @click="openRestore()">清理统一库残留</Button>
@@ -226,13 +231,13 @@ async function restore(includeCleanup = true) {
       <p v-if="!isNative" class="muted">网页演示不读取本机备份，请在桌面应用中查看和恢复。</p>
       <p v-if="error" role="alert">{{ error }}</p>
       <div class="backup-list">
-        <p v-if="!backups.length" class="muted">暂无归集备份</p>
+        <p v-if="!backups.length" class="muted">暂无原目录恢复记录</p>
         <details v-for="group in backupGroups" :key="group.key" class="backup-group">
           <summary class="backup-group-heading">
             <ArchiveRestore :size="19" />
             <strong>{{ group.time }}</strong>
             <span class="muted"
-              >{{ group.entries.length }} 条备份 · {{ group.directoryCount }} 个原目录</span
+              >{{ group.entries.length }} 次归集 · {{ group.directoryCount }} 个原目录</span
             >
             <span class="muted backup-expand">展开 / 收起</span>
           </summary>
@@ -248,7 +253,7 @@ async function restore(includeCleanup = true) {
               size="sm"
               :disabled="busy || backup.status !== 'available'"
               @click="openRestore(backup)"
-              >恢复此备份</Button
+              >恢复原目录</Button
             >
           </article>
         </details>
@@ -256,7 +261,7 @@ async function restore(includeCleanup = true) {
     </div>
     <AppDialog
       :open="dialogOpen"
-      :title="cleanupOnly ? '清理统一库残留' : '恢复备份'"
+      :title="cleanupOnly ? '清理统一库残留' : '恢复归集前原目录'"
       large
       :description="
         cleanupOnly

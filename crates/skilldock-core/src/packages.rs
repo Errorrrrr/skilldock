@@ -130,7 +130,10 @@ impl Engine {
                     .iter()
                     .find(|s| {
                         s.id == skill.source_id
-                            && matches!(s.kind.as_str(), "local" | "git" | "local_reference")
+                            && matches!(
+                                s.kind.as_str(),
+                                "local" | "git" | "local_reference" | "local_managed"
+                            )
                     })
                     .map(|s| Path::new(&s.path).join(&skill.relative_path))
             });

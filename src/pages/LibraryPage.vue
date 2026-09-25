@@ -36,7 +36,6 @@ import Badge from '@/components/ui/Badge.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import AppDialog from '@/components/ui/AppDialog.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
-import DirectoryField from '@/components/DirectoryField.vue'
 import SkillDetailSheet from '@/components/SkillDetailSheet.vue'
 import AppPagination from '@/components/ui/AppPagination.vue'
 import DistributionDialog from '@/components/DistributionDialog.vue'
@@ -46,6 +45,11 @@ import type { Skill } from '@/services/types'
 import { sourceUpdateState } from '@/services/sourceUpdates'
 import { librarySkills, type LibrarySkill } from '@/services/librarySkills'
 import { useLibraryDistribution } from '@/composables/useLibraryDistribution'
+import {
+  presetMembershipErrors,
+  presetMembershipInput,
+  presetSyncErrors,
+} from '@/services/presetMembership'
 
 const app = useAppStore()
 const needsSimplification = computed(
@@ -83,12 +87,24 @@ const distributeOpen = ref(false)
 const distributeIds = ref<string[]>([])
 const distributeTargetIds = ref<string[]>([])
 const addOpen = ref(false)
-const addMode = ref<'menu' | 'git' | 'folder'>('menu')
-const folderPath = ref(app.isNative ? '' : '/Users/demo/Downloads/skills')
-const busy = ref(false)
+const addMode = ref<'menu' | 'git'>('menu')
 const removeOpen = ref(false)
 const addPresetOpen = ref(false)
 const presetId = ref('')
+const presetBusy = ref(false)
+const presetError = ref('')
+const presetMembersSaved = ref(false)
+const presetRequestedSkillIds = ref<string[]>([])
+watch(addPresetOpen, (open) => {
+  if (open) {
+    presetError.value = ''
+    presetMembersSaved.value = false
+    presetRequestedSkillIds.value = []
+  }
+})
+function closeAddPreset(open: boolean) {
+  if (!presetBusy.value) addPresetOpen.value = open
+}
 const updateSkillIds = computed(
   () =>
     new Set(
@@ -265,25 +281,9 @@ function gitImported() {
   addOpen.value = false
   app.notice = 'Git 集合已同步'
 }
-async function importFolder() {
-  if (busy.value) return
-  busy.value = true
-  try {
-    const result = await api.scan(folderPath.value)
-    const paths = result.items
-      .filter((item) => ['ready', 'new', 'same'].includes(item.status))
-      .map((item) => item.path)
-    if (!paths.length) throw new Error('此目录没有可安全导入的 Skill，请前往归集向导处理冲突')
-    const ok = await app.mutate(
-      () => api.importFolder(folderPath.value, paths, false),
-      `已导入 ${paths.length} 个 Skill，原目录未改动`,
-    )
-    if (ok) addOpen.value = false
-  } catch (e) {
-    app.error = e instanceof Error ? e.message : '导入失败'
-  } finally {
-    busy.value = false
-  }
+function openLocalImport() {
+  addOpen.value = false
+  router.push('/local-sources?add=true')
 }
 async function removeSelected() {
   const ids = [...selectedMemberIds.value]
@@ -295,26 +295,44 @@ async function removeSelected() {
   removeOpen.value = false
 }
 async function addToPreset() {
+  if (presetBusy.value || app.loading || !app.snapshot) return
   const preset = app.snapshot?.presets.find((item) => item.id === presetId.value)
-  if (!preset) return
-  const ok = await app.mutate(
-    () =>
-      api.savePreset({
-        id: preset.id,
-        name: preset.name,
-        description: preset.description,
-        skillIds: [
-          ...new Set([
-            ...preset.skillIds,
-            ...selectedRows.value
-              .filter((row) => !row.memberIds.some((id) => preset.skillIds.includes(id)))
-              .map((row) => row.id),
-          ]),
-        ],
-      }),
-    `已加入预设「${preset.name}」`,
-  )
-  if (ok) addPresetOpen.value = false
+  if (!preset) {
+    presetError.value = '预设已不存在，请重新选择'
+    return
+  }
+  presetBusy.value = true
+  app.loading = true
+  presetError.value = ''
+  app.error = ''
+  app.notice = ''
+  try {
+    const requestedIds = presetMembersSaved.value
+      ? presetRequestedSkillIds.value
+      : selectedRows.value.map(
+          (row) => row.memberIds.find((id) => preset.skillIds.includes(id)) || row.id,
+        )
+    if (presetMembersSaved.value) {
+      const errors = presetMembershipErrors(app.snapshot, preset.id, requestedIds)
+      if (errors.length) throw new Error(errors.join('；'))
+    }
+    const next = presetMembersSaved.value
+      ? await api.retryPresetSync()
+      : await api.savePreset(presetMembershipInput(app.snapshot, preset.id, requestedIds))
+    app.snapshot = next
+    presetMembersSaved.value = true
+    presetRequestedSkillIds.value = requestedIds
+    const errors = presetSyncErrors(next, preset.id, requestedIds)
+    if (errors.length) throw new Error(`成员已加入预设，目标同步未完成：${errors.join('；')}`)
+    app.notice = `已加入预设「${preset.name}」，跟随目标已同步`
+    addPresetOpen.value = false
+  } catch (error) {
+    presetError.value = error instanceof Error ? error.message : '加入预设失败'
+    app.error = presetError.value
+  } finally {
+    presetBusy.value = false
+    app.loading = false
+  }
 }
 const rowUpdateSources = computed(() =>
   Object.fromEntries(
@@ -943,11 +961,11 @@ const presetIdOptions = computed(() => [
             <div class="choice-title">从 Git 仓库导入</div>
             <div class="choice-meta">指定仓库、引用和可选子目录</div>
           </div></button
-        ><button class="choice" @click="addMode = 'folder'">
+        ><button class="choice" @click="openLocalImport">
           <div class="item-icon"><FolderInput /></div>
           <div class="choice-main" style="text-align: left">
-            <div class="choice-title">从本地文件夹导入</div>
-            <div class="choice-meta">复制内容到统一库；原文件夹保留</div>
+            <div class="choice-title">本地文件夹（复制入库）</div>
+            <div class="choice-meta">选择成员并保留共享资源；原文件夹保留</div>
           </div></button
         ><button class="choice" @click="openCatalog">
           <div class="item-icon"><Globe2 /></div>
@@ -958,39 +976,35 @@ const presetIdOptions = computed(() => [
         </button>
       </div>
       <GitPackageImport v-else-if="addMode === 'git'" @imported="gitImported" />
-      <div v-else>
-        <label class="field"
-          ><span class="field-label">本地目录</span
-          ><DirectoryField v-model="folderPath" :disabled="busy"
-        /></label>
-        <div class="callout" style="margin-top: 12px">
-          快速导入只处理无冲突项。如需替换原目录为软链，请使用完整归集向导。
-        </div>
-      </div>
       <template #footer
-        ><Button v-if="addMode !== 'menu'" :disabled="busy" @click="addMode = 'menu'">返回</Button
-        ><Button v-else @click="addOpen = false">取消</Button
-        ><Button
-          v-if="addMode === 'folder'"
-          variant="primary"
-          :disabled="busy"
-          :loading="busy"
-          @click="importFolder"
-          >{{ busy ? '正在扫描并导入…' : '扫描并导入' }}</Button
-        ></template
+        ><Button v-if="addMode !== 'menu'" @click="addMode = 'menu'">返回</Button
+        ><Button v-else @click="addOpen = false">取消</Button></template
       ></AppDialog
     >
     <AppDialog
-      v-model:open="addPresetOpen"
+      :open="addPresetOpen"
       title="加入预设"
-      :description="`将 ${selected.length} 个 Skill 加入所选预设，重复成员会自动去重。`"
+      :description="`将 ${selected.length} 个 Skill 加入所选预设，重复成员会自动去重，并同步已跟随的工具目录。`"
+      @update:open="closeAddPreset"
       ><label class="field"
         ><span class="field-label">预设</span
-        ><AppSelect v-model="presetId" aria-label="预设" :options="presetIdOptions" /></label
-      ><template #footer
-        ><Button @click="addPresetOpen = false">取消</Button
-        ><Button variant="primary" :disabled="!presetId" @click="addToPreset"
-          >确认加入</Button
+        ><AppSelect
+          v-model="presetId"
+          aria-label="预设"
+          :options="presetIdOptions"
+          :disabled="presetBusy || presetMembersSaved"
+      /></label>
+      <p v-if="presetError" class="field-error" role="alert">{{ presetError }}</p>
+      <template #footer
+        ><Button :disabled="presetBusy" @click="closeAddPreset(false)">{{
+          presetMembersSaved ? '关闭' : '取消'
+        }}</Button
+        ><Button
+          variant="primary"
+          :disabled="!presetId || presetBusy || app.loading"
+          :loading="presetBusy"
+          @click="addToPreset"
+          >{{ presetBusy ? '处理中…' : presetMembersSaved ? '重试目标同步' : '确认加入' }}</Button
         ></template
       ></AppDialog
     >

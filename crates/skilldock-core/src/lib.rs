@@ -2,6 +2,7 @@ mod backups;
 pub mod error;
 pub mod files;
 mod git_packages;
+mod import_plan;
 mod local_presets;
 mod local_sources;
 pub mod model;
@@ -75,6 +76,13 @@ pub(crate) fn skill_path(root: &Path, skill: &Skill) -> PathBuf {
         .join("tree")
         .join(&skill.relative_path)
 }
+pub(crate) fn declared_skill_name(root: &Path, skill: &Skill) -> String {
+    let suffix = format!("--{}", skill.id.chars().take(8).collect::<String>());
+    let fallback = skill.name.strip_suffix(&suffix).unwrap_or(&skill.name);
+    files::metadata_with_fallback(&skill_path(root, skill), fallback)
+        .map(|(name, _)| name)
+        .unwrap_or_else(|_| fallback.to_string())
+}
 pub(crate) fn binding_path(root: &Path, b: &Binding) -> PathBuf {
     if let Some(path) = &b.external_path {
         return PathBuf::from(path);
@@ -110,6 +118,7 @@ impl Engine {
         }
         fs::remove_dir(internal)?;
         state.schema_version = 2;
+        state.settings.backup_retention = 3;
         state.storage_root = public.display().to_string();
         files::atomic_json(&public.join("state.json"), &state)?;
         files::atomic_json(
@@ -250,6 +259,9 @@ impl Engine {
         let mut state = Snapshot::empty(root.display().to_string());
         state.initialized = true;
         state.schema_version = 3;
+        // New libraries keep adoption originals only until the transaction commits.
+        // Deserializing older libraries retains their existing retention policy.
+        state.settings.backup_retention = 0;
         files::atomic_json(&root.join("state.json"), &state)?;
         files::atomic_json(
             &self.config_dir.join("config.json"),
@@ -626,7 +638,9 @@ impl Engine {
                 self.reconcile_packages()?;
                 Ok(serde_json::to_value(self.snapshot()?)?)
             }
-            "preview_local_source" => self.preview_preset_folder(&request),
+            "preview_local_source" => self.preview_local_source(&request),
+            "preview_collection" => self.preview_collection(&request),
+            "collect_skills" => self.collect_skills(&request),
             "save_local_source" => self.save_local_source(&request),
             "apply_local_source" | "revoke_local_source" | "remove_local_source" => {
                 self.manage_local_source(&request)

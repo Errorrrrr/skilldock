@@ -13,7 +13,7 @@ export function sourceUpdateState(source: Source) {
   const canCheck = !removed && !collected && !needsSetup && remote
   const manual =
     !collected &&
-    (['local', 'folder'].includes(source.kind) ||
+    (['local', 'folder', 'local_managed'].includes(source.kind) ||
       (source.kind === 'git' && source.url.startsWith('/')))
 
   return {

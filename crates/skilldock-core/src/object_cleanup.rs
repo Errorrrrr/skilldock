@@ -50,7 +50,7 @@ impl Engine {
             state
                 .sources
                 .iter()
-                .filter(|s| s.kind == "local")
+                .filter(|s| matches!(s.kind.as_str(), "local" | "local_managed"))
                 .map(|s| &s.path),
         ) {
             let actual = fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
@@ -59,7 +59,12 @@ impl Engine {
             }
         }
         let paths = external_reference_roots(state);
-        if paths.is_empty() {
+        if paths.is_empty()
+            && !state
+                .sources
+                .iter()
+                .any(|source| source.kind == "local_managed")
+        {
             return Ok(());
         }
         if paths
@@ -78,7 +83,7 @@ impl Engine {
         scan.targets.clear();
         scan.settings.agent_profiles.clear();
         scan.sources
-            .retain(|source| source.kind == "local_reference");
+            .retain(|source| matches!(source.kind.as_str(), "local_reference" | "local_managed"));
         let candidates = fs::read_dir(root.join("objects"))?
             .filter_map(|entry| entry.ok())
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
@@ -329,7 +334,12 @@ impl Engine {
                 state
                     .sources
                     .iter()
-                    .filter(|s| matches!(s.kind.as_str(), "local" | "local_reference"))
+                    .filter(|s| {
+                        matches!(
+                            s.kind.as_str(),
+                            "local" | "local_reference" | "local_managed"
+                        )
+                    })
                     .map(|s| &s.path),
             )
             .chain(external_reference_roots(state))
@@ -546,7 +556,12 @@ impl Engine {
                 state
                     .sources
                     .iter()
-                    .filter(|s| matches!(s.kind.as_str(), "local" | "local_reference"))
+                    .filter(|s| {
+                        matches!(
+                            s.kind.as_str(),
+                            "local" | "local_reference" | "local_managed"
+                        )
+                    })
                     .map(|s| s.path.clone()),
             )
             .collect();
@@ -1165,3 +1180,7 @@ mod tests {
 #[cfg(test)]
 #[path = "object_cleanup_tests.rs"]
 mod execution_tests;
+
+#[cfg(test)]
+#[path = "managed_cleanup_tests.rs"]
+mod managed_tests;

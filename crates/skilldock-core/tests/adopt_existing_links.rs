@@ -1,4 +1,5 @@
 use serde_json::{Value, json};
+mod support;
 use skilldock_core::Engine;
 use std::{
     fs,
@@ -57,7 +58,7 @@ impl Fixture {
         )
         .await;
         let target_id = state["targets"][0]["id"].clone();
-        let result = run(&engine, json!({"action":"save_local_source", "path":source,"name":"Local","selectedPaths":[alpha],"revision":state["revision"]})).await;
+        let result = support::legacy_source(&engine, &source, "Local", &alpha);
         let state = result["snapshot"].clone();
         Self {
             _temp: temp,

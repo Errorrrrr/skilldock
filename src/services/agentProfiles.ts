@@ -37,7 +37,8 @@ export function sourceDisplayName(
   profiles = defaultAgentProfiles,
 ): string {
   if (!source) return ''
-  if (!['folder', 'local', 'local_reference'].includes(source.kind)) return source.name
+  if (!['folder', 'local', 'local_reference', 'local_managed'].includes(source.kind))
+    return source.name
   return targetDisplayName({ name: source.name, path: source.path, tool: 'custom' }, profiles)
 }
 

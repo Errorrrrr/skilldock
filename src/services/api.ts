@@ -76,6 +76,10 @@ export interface CleanupReport {
   items: RestorePreview['items']
 }
 
+export interface LocalSourcePreview extends PresetFolderPreview {
+  contentDigest: string
+}
+
 export interface PresetFolderPreview {
   packageId?: string | null
   removed?: { skillId: string; name: string; path: string }[]
@@ -103,6 +107,15 @@ export interface SourceBindingInput {
   path: string
   reference: string
   subdir: string
+}
+
+export interface CollectionPreview {
+  revision: number
+  fingerprint: string
+  mode: 'package' | 'individual'
+  paths: string[]
+  items: ScanResult['items']
+  warnings: string[]
 }
 
 export interface GitPackagePreview {
@@ -179,12 +192,19 @@ export const api = {
     autoAdd: boolean
     removedIds?: string[]
   }): Promise<GitPackageResult> => native('import_git_package', input),
+  previewLocalSource: (path: string, sourceId?: string): Promise<LocalSourcePreview> =>
+    isNative
+      ? native('preview_local_source', { path, sourceId })
+      : Promise.reject(new Error('请在桌面应用中扫描本地来源')),
   saveLocalSource: (input: {
     path: string
     name: string
     selectedPaths: string[]
     revision: number
+    contentDigest: string
     sourceId?: string
+    migrate?: boolean
+    keepConflicts?: boolean
   }): Promise<{ snapshot: Snapshot; sourceId: string }> =>
     isNative
       ? native('save_local_source', input)
@@ -315,6 +335,32 @@ export const api = {
     isNative ? native('scan', { path }) : demo.demoScan(path),
   scanMany: (paths: string[]): Promise<ScanResult> =>
     isNative ? native('scan_many', { paths }) : demo.demoScanMany(paths),
+  previewCollection: async (
+    paths: string[],
+    mode: 'package' | 'individual',
+    adopt: boolean,
+  ): Promise<CollectionPreview> => {
+    if (isNative) return native('preview_collection', { paths, mode, adopt })
+    const [scan, snapshot] = await Promise.all([demo.demoScanMany(paths), demo.demoSnapshot()])
+    return { ...scan, paths, mode, revision: snapshot.revision, fingerprint: 'demo' }
+  },
+  collectSkills: async (input: {
+    paths: string[]
+    mode: 'package' | 'individual'
+    adopt: boolean
+    expectedRevision: number
+    fingerprint: string
+    selectedPaths: string[]
+    resolutions: Record<string, string>
+  }): Promise<Snapshot> => {
+    if (isNative) return native('collect_skills', input)
+    let state = await demo.demoSnapshot()
+    for (const path of input.paths) {
+      const selected = input.selectedPaths.filter((p) => p === path || p.startsWith(`${path}/`))
+      if (selected.length) state = await demo.demoImportFolder(path, selected, input.adopt)
+    }
+    return state
+  },
   discover: (): Promise<Target[]> => (isNative ? native('discover') : demo.demoDiscover()),
   importBatch: async (
     groups: { path: string; selectedPaths: string[] }[],

@@ -93,9 +93,39 @@ fn merge_records(state: &mut Snapshot, mapping: &BTreeMap<String, String>) {
         remap_ids(&mut subscription.selected_ids, mapping);
         remap_ids(&mut subscription.excluded_ids, mapping);
     }
+    for source in &mut state.sources {
+        if let Some(ids) = &mut source.local_member_ids {
+            remap_ids(ids, mapping);
+        }
+    }
     state
         .skills
         .retain(|s| !mapping.get(&s.id).is_some_and(|id| id != &s.id));
+}
+
+fn bound_declared_names(
+    state: &Snapshot,
+    root: &Path,
+) -> BTreeMap<(String, String), BTreeSet<String>> {
+    let mut names = BTreeMap::new();
+    let mut groups: BTreeMap<_, BTreeSet<_>> = BTreeMap::new();
+    for binding in &state.bindings {
+        let Some(skill) = state
+            .skills
+            .iter()
+            .find(|skill| skill.id == binding.skill_id)
+        else {
+            continue;
+        };
+        let name = names
+            .entry(skill.id.clone())
+            .or_insert_with(|| declared_skill_name(root, skill).to_lowercase());
+        groups
+            .entry((binding.target_id.clone(), name.clone()))
+            .or_default()
+            .insert(skill.id.clone());
+    }
+    groups
 }
 
 pub(crate) fn finalize(
@@ -125,6 +155,19 @@ pub(crate) fn finalize(
         }
     }
     merge_records(after, &mapping);
+    // Updating a source can change SKILL.md's declared name without going through
+    // a distribution plan. Reject newly introduced collisions before any links
+    // are changed, while allowing existing collisions to be revoked or repaired.
+    let previous_names = bound_declared_names(before, root);
+    for (key, ids) in bound_declared_names(after, root) {
+        if ids.len() > 1
+            && !previous_names
+                .get(&key)
+                .is_some_and(|old| ids.is_subset(old))
+        {
+            return fail("更新会使同一工具中的 Skill 声明同名，请先取消其中一个分发或修改来源名称");
+        }
+    }
     let mut names = BTreeSet::new();
     for skill in &mut after.skills {
         if let Some(old) = before.skills.iter().find(|old| {
@@ -508,6 +551,11 @@ impl Engine {
                     subscription
                         .selected_ids
                         .retain(|id| !backup.added_skill_ids.contains(id));
+                }
+                for source in &mut state.sources {
+                    if let Some(ids) = &mut source.local_member_ids {
+                        ids.retain(|id| !backup.added_skill_ids.contains(id));
+                    }
                 }
                 Self::refresh_package_members(state);
                 state.content_backups.retain(|b| b.source_id != source_id);

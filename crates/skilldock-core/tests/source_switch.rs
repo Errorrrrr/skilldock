@@ -1,4 +1,5 @@
 use serde_json::{Value, json};
+mod support;
 use skilldock_core::Engine;
 use std::{
     fs,
@@ -45,6 +46,7 @@ impl F {
         let mut legacy = e.configure(base.join("library").to_str().unwrap()).unwrap();
         // Existing libraries keep per-target source choices until explicit migration.
         legacy.schema_version = 2;
+        legacy.settings.backup_retention = 1;
         skilldock_core::files::atomic_json(
             &PathBuf::from(&legacy.storage_root).join("state.json"),
             &legacy,
@@ -76,7 +78,7 @@ impl F {
             .find(|t| t["path"] == other_path.display().to_string())
             .unwrap()["id"]
             .clone();
-        state=run(&e,json!({"action":"distribute","skillIds":[old],"targetIds":[other],"expectedRevision":state["revision"]})).await;
+        run(&e,json!({"action":"distribute","skillIds":[old],"targetIds":[other],"expectedRevision":state["revision"]})).await;
         let source_path = base.join("new-source");
         let alpha = source_path.join("alpha");
         skill(&alpha, if same { "original" } else { "new content" });
@@ -121,7 +123,7 @@ impl F {
                 .unwrap()["id"]
                 .clone();
         } else {
-            let result=run(&e,json!({"action":"save_local_source","name":"Local B","path":source_path,"selectedPaths":[alpha],"revision":state["revision"]})).await;
+            let result = support::legacy_source(&e, &source_path, "Local B", &alpha);
             source = result["sourceId"].clone();
             state = result["snapshot"].clone();
         }
@@ -348,7 +350,7 @@ async fn local_source_claim_blocks_replacement_by_another_source() {
     f.state = run(&f.e, f.request("apply_local_source", true)).await;
     let next = f.base.join("third-source/alpha");
     skill(&next, "third");
-    let result=run(&f.e,json!({"action":"save_local_source","name":"Third","path":next.parent(),"selectedPaths":[next],"revision":f.state["revision"]})).await;
+    let result = support::legacy_source(&f.e, next.parent().unwrap(), "Third", &next);
     f.state = result["snapshot"].clone();
     let third = f.state["skills"]
         .as_array()

@@ -79,7 +79,7 @@ impl Engine {
                             })
                     }) || state.sources.iter().any(|source| {
                         source.id == skill.source_id
-                            && matches!(source.kind.as_str(), "local" | "git")
+                            && matches!(source.kind.as_str(), "local" | "git" | "local_managed")
                             && !source.path.is_empty()
                             && fs::canonicalize(Path::new(&source.path).join(&skill.relative_path))
                                 .ok()

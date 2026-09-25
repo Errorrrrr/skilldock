@@ -38,7 +38,7 @@ import {
 import Button from '@/components/ui/Button.vue'
 import Badge from '@/components/ui/Badge.vue'
 import DirectoryField from '@/components/DirectoryField.vue'
-import { api } from '@/services/api'
+import { api, type CollectionPreview } from '@/services/api'
 import { useAppStore } from '@/stores/app'
 import type { ScanItem, Target } from '@/services/types'
 import { usePagination } from '@/composables/usePagination'
@@ -186,7 +186,9 @@ const scanItems = ref<ScanItem[]>([])
 const warnings = ref<string[]>([])
 const selectedPaths = ref<string[]>([])
 const resolutions = ref<Record<string, 'rename' | 'keep' | 'skip'>>({})
-const adopt = ref(false)
+const adopt = ref(true)
+const collectionMode = ref<'package' | 'individual'>('package')
+const collectionPreview = ref<CollectionPreview | null>(null)
 const busy = ref(false)
 const complete = ref(false)
 const selectable = (item: ScanItem) => ['ready', 'new', 'same', 'conflict'].includes(item.status)
@@ -254,11 +256,11 @@ const status = (value: string) =>
 async function configure() {
   if (!rootPath.value.trim()) return
   configuring.value = true
-  const ok = await app.mutate(() => api.configure(rootPath.value), '统一存储目录已配置')
+  await app.mutate(() => api.configure(rootPath.value), '统一存储目录已配置')
   configuring.value = false
-  if (ok) await loadCandidates()
 }
 async function loadCandidates() {
+  if (busy.value) return
   busy.value = true
   try {
     candidates.value = await api.discover()
@@ -269,6 +271,7 @@ async function loadCandidates() {
   }
 }
 function addCustom() {
+  if (busy.value) return
   const path = customPath.value.trim()
   if (!customName.value.trim()) {
     folderError.value = '请输入文件夹名称'
@@ -304,10 +307,16 @@ function toggleReviewAll(event: Event) {
   }
 }
 async function scan() {
-  if (!scanPaths.value.length) return
+  if (busy.value || !scanPaths.value.length) return
   busy.value = true
+  collectionPreview.value = null
+  const paths = [...scanPaths.value]
+  const mode = collectionMode.value
+  const shouldAdopt = adopt.value
   try {
-    const result = await api.scanMany(scanPaths.value)
+    const result = await api.previewCollection(paths, mode, shouldAdopt)
+    collectionPreview.value = result
+    resolutions.value = {}
     const items = result.items
     scanItems.value = items
     warnings.value = result.warnings
@@ -329,26 +338,20 @@ function nextReview() {
   step.value = 3
 }
 async function execute() {
-  if (busy.value) return
+  if (busy.value || !collectionPreview.value) return
   busy.value = true
-  const grouped = new Map<string, string[]>()
-  for (const item of selectedItems.value) {
-    const root =
-      [...scanPaths.value]
-        .sort((a, b) => a.length - b.length)
-        .find(
-          (path) =>
-            item.path === path ||
-            item.path.startsWith(path.replace(/[\\/]+$/, '') + (path.includes('\\') ? '\\' : '/')),
-        ) || scanPaths.value[0]
-    grouped.set(root, [...(grouped.get(root) || []), item.path])
-  }
+  const plan = collectionPreview.value
   const ok = await app.mutate(
     () =>
-      api.importBatch(
-        [...grouped].map(([path, selectedPaths]) => ({ path, selectedPaths })),
-        adopt.value,
-      ),
+      api.collectSkills({
+        paths: plan.paths,
+        mode: plan.mode,
+        adopt: adopt.value,
+        expectedRevision: plan.revision,
+        fingerprint: plan.fingerprint,
+        selectedPaths: selectedItems.value.map((item) => item.path),
+        resolutions: { ...resolutions.value },
+      }),
     `已归集 ${selectedItems.value.length} 个 Skill`,
   )
   busy.value = false
@@ -371,7 +374,11 @@ watch(
   { immediate: true },
 )
 function restartScan() {
+  if (busy.value) return
   scanItems.value = []
+  collectionPreview.value = null
+  resolutions.value = {}
+  selectedPaths.value = []
   resetScanPage()
   resetPlanPage()
   step.value = 1
@@ -381,7 +388,7 @@ function restartScan() {
 
 const resolutionOptions = [
   { value: '', label: '请选择', disabled: true },
-  { value: 'keep', label: '保留不同版本' },
+  { value: 'keep', label: '独立保留（名称加后缀）' },
   { value: 'skip', label: '跳过' },
 ]
 </script>
@@ -393,8 +400,14 @@ const resolutionOptions = [
         <h1 class="page-title">归集已有 Skill</h1>
         <p class="page-subtitle">扫描散落目录，审阅内容关系，再决定是否把原位置替换为软链。</p>
       </div>
-      <Button v-if="app.snapshot?.initialized" @click="restartScan"><ScanSearch />重新开始</Button>
+      <Button v-if="app.snapshot?.initialized" :disabled="busy" @click="restartScan"
+        ><ScanSearch />重新开始</Button
+      >
     </header>
+    <div v-if="app.snapshot?.initialized && app.snapshot.schemaVersion < 3" class="callout warning">
+      当前库仍使用旧版存储规则。请先在 Skill 库中预览并启用单份当前内容，再归集现有目录。
+      <Button size="sm" @click="router.push('/library')">前往 Skill 库</Button>
+    </div>
     <section v-if="app.snapshot && !app.snapshot.initialized" class="onboarding">
       <div class="onboarding-main">
         <FolderSearch aria-hidden="true" />
@@ -566,6 +579,7 @@ const resolutionOptions = [
                 <div v-for="target in group.visible" :key="target.id" class="directory-row">
                   <input
                     v-model="scanPaths"
+                    :disabled="busy"
                     class="checkbox"
                     type="checkbox"
                     :value="target.path"
@@ -581,12 +595,15 @@ const resolutionOptions = [
                 <h4>其他文件夹</h4>
                 <p class="subtle">为本次归集补充目录，可命名、编辑或移除。</p>
               </div>
-              <Button size="sm" @click="openFolder()"><Plus :size="14" />添加文件夹</Button>
+              <Button size="sm" :disabled="busy" @click="openFolder()"
+                ><Plus :size="14" />添加文件夹</Button
+              >
             </div>
             <div v-if="customPaths.length" class="choice-list">
               <div v-for="path in customPaths" :key="path" class="choice">
                 <input
                   v-model="scanPaths"
+                  :disabled="busy"
                   class="checkbox"
                   type="checkbox"
                   :value="path"
@@ -601,6 +618,7 @@ const resolutionOptions = [
                   variant="ghost"
                   size="icon"
                   :aria-label="`编辑 ${path}`"
+                  :disabled="busy"
                   @click="openFolder(path)"
                   ><Pencil :size="16"
                 /></Button>
@@ -608,6 +626,7 @@ const resolutionOptions = [
                   variant="ghost"
                   size="icon"
                   :aria-label="`移除 ${path}`"
+                  :disabled="busy"
                   @click="removeFolder(path)"
                   ><Trash2 :size="16"
                 /></Button>
@@ -616,6 +635,27 @@ const resolutionOptions = [
             <p v-else class="scan-folder-empty">
               暂无其他文件夹。添加后默认勾选，可取消以排除本次归集。
             </p>
+          </div>
+          <div class="callout" style="margin-top: 16px">
+            <label class="field">
+              <span class="field-label">内容组织方式</span>
+              <AppSelect
+                v-model="collectionMode"
+                :disabled="busy"
+                :options="[
+                  { value: 'package', label: '保留整包结构（含共享资源）' },
+                  { value: 'individual', label: '各 Skill 相互独立（按成员去重）' },
+                ]"
+              />
+            </label>
+            <p>
+              工作流包保留原始目录结构；只有确认各 Skill
+              不依赖包根文件或兄弟目录时，才选择独立模式。
+            </p>
+            <label class="choice">
+              <input v-model="adopt" class="checkbox" type="checkbox" :disabled="busy" />
+              <span>归集后将原目录替换为指向统一库的软链</span>
+            </label>
           </div>
         </section>
         <section v-else-if="step === 2">
@@ -877,17 +917,24 @@ const resolutionOptions = [
       <div v-if="step === 3" class="wizard-options">
         <div>
           <label class="choice"
-            ><input v-model="adopt" class="checkbox" type="checkbox" />
+            ><input :checked="adopt" class="checkbox" type="checkbox" disabled />
             <div class="choice-main">
               <div class="choice-title">归集后将原目录替换为软链</div>
               <div class="choice-meta">
-                验证成功后将原实体目录替换为指向中央库的软链；默认关闭。
+                {{
+                  adopt ? '已选择接管原目录。验证后替换为软链。' : '仅复制入库，原目录保持不变。'
+                }}返回选择扫描范围可修改。
               </div>
             </div></label
           >
           <div class="callout warning" style="margin-top: 10px">
             <ShieldAlert style="width: 15px; display: inline; vertical-align: -3px" />
-            原实体目录会保留为相邻的隐藏备份；若归集未完成，可从任务记录恢复。
+            {{
+              (app.snapshot?.settings.backupRetention ?? 3) === 0
+                ? '原件仅在操作期间临时保留；成功提交后自动清理。失败或中断仍可恢复。'
+                : `按现有设置保留最近 ${app.snapshot?.settings.backupRetention ?? 3} 批原目录备份。`
+            }}
+            来源内容或资料库发生变化时，需要重新扫描确认。
           </div>
         </div>
       </div>
@@ -898,7 +945,7 @@ const resolutionOptions = [
           ><Button
             v-if="step === 1"
             variant="primary"
-            :disabled="busy || !scanPaths.length"
+            :disabled="busy || !scanPaths.length || (app.snapshot?.schemaVersion ?? 0) < 3"
             :loading="busy"
             @click="scan"
             >{{ busy ? '扫描中…' : '开始扫描' }}</Button

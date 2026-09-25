@@ -1,27 +1,26 @@
 <script setup lang="ts">
 import SkillDirectoryActions from '@/components/SkillDirectoryActions.vue'
 import { computed, onMounted, ref, watch } from 'vue'
-import {
-  Search,
-  Globe2,
-  Download,
-  CheckCircle2,
-  GitBranch,
-  FolderInput,
-  ExternalLink,
-} from 'lucide-vue-next'
+import { Search, Globe2, Download, CheckCircle2, GitBranch, FolderInput } from 'lucide-vue-next'
 import Button from '@/components/ui/Button.vue'
 import Badge from '@/components/ui/Badge.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import AppSheet from '@/components/ui/AppSheet.vue'
 import AppDialog from '@/components/ui/AppDialog.vue'
-import DirectoryField from '@/components/DirectoryField.vue'
 import AppPagination from '@/components/ui/AppPagination.vue'
 import { api } from '@/services/api'
 import { defaultCatalogSites, normalizeCatalogSites, catalogSiteKey } from '@/services/catalogSites'
 import { useAppStore } from '@/stores/app'
+import { catalogInstallSessions } from '@/stores/catalogInstall'
 import type { CatalogItem } from '@/services/types'
 import { usePagination } from '@/composables/usePagination'
+import {
+  catalogInstallComplete,
+  catalogInstallErrors,
+  catalogInstallKey,
+  createCatalogInstallSession,
+  runCatalogInstall,
+} from '@/services/catalogInstall'
 
 const app = useAppStore()
 const query = ref('')
@@ -45,7 +44,20 @@ const searching = ref(false)
 const detail = ref<CatalogItem | null>(null)
 const detailOpen = ref(false)
 const installOpen = ref(false)
-const installing = ref(false)
+const executingInstall = ref(false)
+const installing = computed(
+  () =>
+    executingInstall.value ||
+    Object.values(catalogInstallSessions.value).some((session) => session.running),
+)
+const installItem = ref<CatalogItem | null>(null)
+const installSessions = catalogInstallSessions
+const installSession = computed(() =>
+  installItem.value ? installSessions.value[catalogInstallKey(installItem.value)] : undefined,
+)
+const unfinishedInstalls = computed(() =>
+  Object.values(installSessions.value).filter((session) => !catalogInstallComplete(session)),
+)
 const presetIds = ref<string[]>([])
 const targetIds = ref<string[]>([])
 const gitOpen = ref(false)
@@ -53,9 +65,6 @@ const gitUrl = ref('')
 const gitRef = ref('HEAD')
 const gitSubdir = ref('')
 const importingGit = ref(false)
-const folderOpen = ref(false)
-const folder = ref(app.isNative ? '' : '/Users/demo/Downloads/community-skills')
-const importingFolder = ref(false)
 const installed = computed(
   () =>
     new Set(
@@ -96,63 +105,60 @@ function show(item: CatalogItem) {
   detailOpen.value = true
 }
 function startInstall(item: CatalogItem) {
-  detail.value = item
+  if (installing.value) return
+  installItem.value = item
   detailOpen.value = false
-  presetIds.value = []
-  targetIds.value = []
+  const session = installSession.value
+  presetIds.value =
+    session?.steps.filter((step) => step.kind === 'preset').map((step) => step.id) || []
+  targetIds.value =
+    session?.steps.filter((step) => step.kind === 'target').map((step) => step.id) || []
   installOpen.value = true
 }
-async function install() {
-  if (!detail.value) return
-  installing.value = true
-  const ok = await app.mutate(
-    () => api.installCatalog(detail.value!.slug, detail.value!.site),
-    `${detail.value.name} 已安装到中央库`,
-  )
-  if (!ok) {
-    installing.value = false
-    return
-  }
-  const source = app.snapshot?.sources.find(
-    (s) =>
-      s.reference === detail.value!.slug &&
-      ['catalog', 'clawhub'].includes(s.kind) &&
-      catalogSiteKey(s.url) === catalogSiteKey(detail.value!.site),
-  )
-  const skill =
-    app.snapshot?.skills.find((item) => item.sourceId === source?.id) ||
-    (!app.isNative
-      ? app.snapshot?.skills.find((item) => item.id === detail.value!.slug)
-      : undefined)
-  for (const presetId of presetIds.value) {
-    const preset = app.snapshot?.presets.find((item) => item.id === presetId)
-    if (preset && skill)
-      await app.mutate(
-        () =>
-          api.savePreset({
-            id: preset.id,
-            name: preset.name,
-            description: preset.description,
-            skillIds: [...new Set([...preset.skillIds, skill.id])],
-          }),
-        `已加入预设「${preset.name}」`,
-      )
-  }
-  if (skill && targetIds.value.length && app.snapshot) {
-    try {
-      const plan = await api.plan([skill.id], targetIds.value)
-      if (plan.items.some((item) => item.error))
-        throw new Error('目标存在冲突，Skill 已入库但未分发')
-      await app.mutate(
-        () => api.distribute([skill.id], targetIds.value, plan.revision),
-        '安装并分发已完成',
-      )
-    } catch (e) {
-      app.error = e instanceof Error ? e.message : '分发失败'
-    }
-  }
-  installing.value = false
+function closeInstall(open: boolean) {
+  if (!installing.value) installOpen.value = open
+}
+function endInstall() {
+  if (installing.value || !installItem.value) return
+  delete installSessions.value[catalogInstallKey(installItem.value)]
   installOpen.value = false
+}
+async function install() {
+  if (!installItem.value || !app.snapshot || installing.value || app.loading) return
+  const key = catalogInstallKey(installItem.value)
+  if (!installSessions.value[key])
+    installSessions.value[key] = createCatalogInstallSession(
+      installItem.value,
+      presetIds.value,
+      targetIds.value,
+      app.snapshot,
+    )
+  const session = installSessions.value[key]!
+  executingInstall.value = true
+  app.loading = true
+  app.notice = ''
+  app.error = ''
+  try {
+    const complete = await runCatalogInstall(
+      session,
+      {
+        ...api,
+        snapshot: () => app.snapshot!,
+        updateSnapshot: (next) => {
+          app.snapshot = next
+        },
+      },
+      !app.isNative,
+    )
+    if (complete) {
+      app.notice = `${session.item.name} 已入库（${session.skillIds.length} 个 Skill），所选后续操作已完成`
+      installOpen.value = false
+      delete installSessions.value[key]
+    } else app.error = catalogInstallErrors(session).join('；')
+  } finally {
+    executingInstall.value = false
+    app.loading = false
+  }
 }
 async function importGit() {
   if (importingGit.value || !gitUrl.value.trim()) return
@@ -166,26 +172,6 @@ async function importGit() {
     if (ok) gitOpen.value = false
   } finally {
     importingGit.value = false
-  }
-}
-async function importFolder() {
-  if (importingFolder.value || !folder.value.trim()) return
-  importingFolder.value = true
-  try {
-    const scan = await api.scan(folder.value.trim())
-    const paths = scan.items
-      .filter((i) => ['ready', 'new', 'same'].includes(i.status))
-      .map((i) => i.path)
-    if (!paths.length) throw new Error('未发现可直接导入的 Skill；冲突内容请使用归集向导')
-    const ok = await app.mutate(
-      () => api.importFolder(folder.value.trim(), paths, false),
-      `已从文件夹导入 ${paths.length} 项`,
-    )
-    if (ok) folderOpen.value = false
-  } catch (e) {
-    app.error = e instanceof Error ? e.message : '导入失败'
-  } finally {
-    importingFolder.value = false
   }
 }
 onMounted(() => {
@@ -203,9 +189,25 @@ onMounted(() => {
       <div class="actions">
         <Button @click="$router.push('/local-sources')">本地来源</Button>
         <Button @click="gitOpen = true"><GitBranch />Git 仓库</Button
-        ><Button @click="folderOpen = true"><FolderInput />复制文件夹入库</Button>
+        ><Button @click="$router.push('/local-sources?add=true')"
+          ><FolderInput />本地文件夹（复制入库）</Button
+        >
       </div>
     </header>
+    <div
+      v-for="session in unfinishedInstalls"
+      :key="catalogInstallKey(session.item)"
+      class="recovery-bar"
+    >
+      <span
+        >{{ session.item.name }}：{{
+          session.running ? '正在处理' : '部分操作尚未完成，已完成步骤会保留'
+        }}</span
+      >
+      <Button size="sm" :disabled="installing" @click="startInstall(session.item)"
+        >查看并继续</Button
+      >
+    </div>
     <section class="panel">
       <div class="toolbar">
         <div class="search-field" style="max-width: none">
@@ -261,8 +263,18 @@ onMounted(() => {
           </div>
           <Badge v-if="installed.has(`${catalogSiteKey(item.site)}:${item.slug}`)" tone="green"
             ><CheckCircle2 />已入库</Badge
-          ><Button v-else variant="primary" size="sm" @click="startInstall(item)"
-            ><Download />安装</Button
+          ><Button
+            v-if="
+              !installed.has(`${catalogSiteKey(item.site)}:${item.slug}`) ||
+              installSessions[catalogInstallKey(item)]
+            "
+            variant="primary"
+            size="sm"
+            :disabled="installing"
+            @click="startInstall(item)"
+            ><Download />{{
+              installSessions[catalogInstallKey(item)] ? '继续处理' : '安装'
+            }}</Button
           ><Button size="sm" variant="ghost" @click="show(item)">详情</Button>
         </div>
       </div>
@@ -311,37 +323,50 @@ onMounted(() => {
       ></AppSheet
     >
     <AppDialog
-      v-model:open="installOpen"
+      :open="installOpen"
       title="确认安装"
-      :description="`${detail?.name || ''} 将先安装到中央库；下面的分发与加入预设均为可选。`"
+      :description="`${installItem?.name || ''} 将先安装到中央库；下面的分发与加入预设均为可选。`"
       large
+      @update:open="closeInstall"
       ><div class="form-grid">
         <section>
           <div class="field-label" style="margin-bottom: 8px">内容</div>
           <div class="choice">
             <div class="item-icon"><Download /></div>
             <div class="choice-main">
-              <div class="choice-title">{{ detail?.name }}</div>
+              <div class="choice-title">{{ installItem?.name }}</div>
               <div class="choice-meta">
-                {{ siteLabel(detail?.site || '') }} · v{{ detail?.version }}
+                {{ siteLabel(installItem?.site || '') }} · v{{ installItem?.version }}
               </div>
-              <SkillDirectoryActions :catalog="detail" />
+              <SkillDirectoryActions :catalog="installItem" />
             </div>
           </div>
           <div class="callout" style="margin-top: 10px">
-            安装内容先进入统一目录，可选择同时加入预设或分发。
+            安装内容先进入统一目录；如果来源包含多个 Skill，所选预设与目标会包含全部成员。
           </div>
         </section>
         <section>
           <div class="field-label" style="margin-bottom: 8px">可选后续操作</div>
           <div class="choice-list">
             <label v-for="preset in app.snapshot?.presets" :key="preset.id" class="choice"
-              ><input v-model="presetIds" class="checkbox" type="checkbox" :value="preset.id" />
+              ><input
+                v-model="presetIds"
+                class="checkbox"
+                type="checkbox"
+                :value="preset.id"
+                :disabled="!!installSession"
+              />
               <div class="choice-main">
                 <div class="choice-title">加入 {{ preset.name }}</div>
               </div></label
             ><label v-for="target in app.snapshot?.targets" :key="target.id" class="choice"
-              ><input v-model="targetIds" class="checkbox" type="checkbox" :value="target.id" />
+              ><input
+                v-model="targetIds"
+                class="checkbox"
+                type="checkbox"
+                :value="target.id"
+                :disabled="!!installSession"
+              />
               <div class="choice-main">
                 <div class="choice-title">分发到 {{ app.targetName(target) }}</div>
               </div></label
@@ -349,11 +374,44 @@ onMounted(() => {
           </div>
         </section>
       </div>
+      <div v-if="installSession" class="list-stack" style="margin-top: 16px" aria-live="polite">
+        <div v-for="step in installSession.steps" :key="`${step.kind}:${step.id}`" class="choice">
+          <div class="choice-main">
+            <div class="choice-title">{{ step.label }}</div>
+            <p v-if="step.error" class="field-error" role="alert">{{ step.error }}</p>
+          </div>
+          <Badge
+            :tone="
+              step.status === 'succeeded' ? 'green' : step.status === 'failed' ? 'amber' : 'neutral'
+            "
+          >
+            {{
+              { pending: '待处理', running: '处理中', succeeded: '已完成', failed: '需重试' }[
+                step.status
+              ]
+            }}
+          </Badge>
+        </div>
+        <p v-if="installSession.skillIds.length" class="subtle">
+          本次来源共 {{ installSession.skillIds.length }} 个 Skill；重试会跳过已经完成的操作。
+        </p>
+        <p v-if="!installing" class="subtle">
+          结束本次操作只清除进度，已入库、已加入预设和已分发的内容会保留。
+        </p>
+      </div>
       <template #footer
-        ><Button :disabled="installing" @click="installOpen = false">取消</Button
-        ><Button variant="primary" :disabled="installing" :loading="installing" @click="install">{{
-          installing ? '安装中…' : '安装并继续'
-        }}</Button></template
+        ><Button :disabled="installing" @click="closeInstall(false)">{{
+          installSession ? '关闭' : '取消'
+        }}</Button
+        ><Button v-if="installSession" :disabled="installing" @click="endInstall"
+          >结束本次操作</Button
+        ><Button
+          variant="primary"
+          :disabled="installing || app.loading"
+          :loading="installing"
+          @click="install"
+          >{{ installing ? '处理中…' : installSession ? '重试未完成步骤' : '安装并继续' }}</Button
+        ></template
       ></AppDialog
     >
     <AppDialog
@@ -386,28 +444,6 @@ onMounted(() => {
           :loading="importingGit"
           @click="importGit"
           >{{ importingGit ? '导入中…' : '导入' }}</Button
-        ></template
-      ></AppDialog
-    >
-    <AppDialog
-      v-model:open="folderOpen"
-      title="复制文件夹入库"
-      description="将内容复制到统一库，原文件夹保留；直接使用原目录请添加本地来源。"
-      ><label class="field"
-        ><span class="field-label">文件夹</span
-        ><DirectoryField v-model="folder" :disabled="importingFolder"
-      /></label>
-      <div class="callout" style="margin-top: 12px">
-        若需要接管目录并替换为软链，请改用“归集已有 Skill”向导。
-      </div>
-      <template #footer
-        ><Button :disabled="importingFolder" @click="folderOpen = false">取消</Button
-        ><Button
-          variant="primary"
-          :disabled="importingFolder || !folder.trim()"
-          :loading="importingFolder"
-          @click="importFolder"
-          >{{ importingFolder ? '正在导入…' : '扫描并导入' }}</Button
         ></template
       ></AppDialog
     >
