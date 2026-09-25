@@ -13,7 +13,7 @@ import AgentDirectories from '@/components/AgentDirectories.vue'
 import { cloneAgentProfiles } from '@/services/agentProfiles'
 import AppSelect from '@/components/ui/AppSelect.vue'
 import AppPagination from '@/components/ui/AppPagination.vue'
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Check,
@@ -195,9 +195,23 @@ const selectable = (item: ScanItem) => ['ready', 'new', 'same', 'conflict'].incl
 const activeScanTab = ref<'eligible' | 'ineligible'>('eligible')
 const eligibleScanItems = computed(() => scanItems.value.filter((item) => selectable(item)))
 const ineligibleScanItems = computed(() => scanItems.value.filter((item) => !selectable(item)))
-const currentScanTabItems = computed(() =>
-  activeScanTab.value === 'eligible' ? eligibleScanItems.value : ineligibleScanItems.value,
+const conflictsOnly = ref(false)
+const focusedConflictPath = ref('')
+const reviewTable = ref<HTMLTableElement | null>(null)
+const conflictItems = computed(() =>
+  eligibleScanItems.value.filter((item) => item.status === 'conflict'),
 )
+const currentScanTabItems = computed(() =>
+  activeScanTab.value === 'eligible'
+    ? conflictsOnly.value
+      ? conflictItems.value
+      : eligibleScanItems.value
+    : ineligibleScanItems.value,
+)
+function showReviewItems(onlyConflicts: boolean) {
+  conflictsOnly.value = onlyConflicts
+  switchScanTab('eligible')
+}
 function switchScanTab(tab: 'eligible' | 'ineligible') {
   activeScanTab.value = tab
   resetScanPage()
@@ -239,9 +253,30 @@ const {
   pagedItems: pagedSelectedItems,
   resetPage: resetPlanPage,
 } = usePagination(selectedItems, { initialPageSize: 10 })
-const conflictsOpen = computed(() =>
-  selectedItems.value.some((item) => item.status === 'conflict' && !resolutions.value[item.path]),
+const unresolvedConflicts = computed(() =>
+  selectedItems.value.filter((item) => item.status === 'conflict' && !resolutions.value[item.path]),
 )
+const conflictsOpen = computed(() => unresolvedConflicts.value.length > 0)
+async function locateNextConflict() {
+  if (!conflictsOpen.value) return
+  const previousIndex = conflictItems.value.findIndex(
+    (item) => item.path === focusedConflictPath.value,
+  )
+  const unresolvedPaths = new Set(unresolvedConflicts.value.map((item) => item.path))
+  const next =
+    conflictItems.value.find(
+      (item, index) => index > previousIndex && unresolvedPaths.has(item.path),
+    ) ?? unresolvedConflicts.value[0]!
+  showReviewItems(true)
+  focusedConflictPath.value = next.path
+  scanPage.value = Math.floor(conflictItems.value.indexOf(next) / scanPageSize.value) + 1
+  await nextTick()
+  const row = Array.from(
+    reviewTable.value?.querySelectorAll<HTMLTableRowElement>('tbody tr') ?? [],
+  ).find((row) => row.dataset.reviewPath === next.path)
+  row?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  row?.querySelector<HTMLElement>('[role="combobox"]')?.focus({ preventScroll: true })
+}
 const status = (value: string) =>
   (({
     ready: ['可归集', 'blue'],
@@ -317,6 +352,8 @@ async function scan() {
     const result = await api.previewCollection(paths, mode, shouldAdopt)
     collectionPreview.value = result
     resolutions.value = {}
+    conflictsOnly.value = false
+    focusedConflictPath.value = ''
     const items = result.items
     scanItems.value = items
     warnings.value = result.warnings
@@ -379,6 +416,8 @@ function restartScan() {
   collectionPreview.value = null
   resolutions.value = {}
   selectedPaths.value = []
+  conflictsOnly.value = false
+  focusedConflictPath.value = ''
   resetScanPage()
   resetPlanPage()
   step.value = 1
@@ -680,7 +719,7 @@ const resolutionOptions = [
                 "
                 @change="toggleReviewAll"
               /><span class="choice-title"
-                >全选可归集项 ({{
+                >全选全部可归集项（含筛选外） ({{
                   selectedPaths.filter((p) => eligibleScanItems.some((i) => i.path === p)).length
                 }}
                 / {{ eligibleScanItems.length }})</span
@@ -726,6 +765,39 @@ const resolutionOptions = [
             </div>
           </div>
 
+          <div v-if="conflictItems.length" class="callout" style="margin-bottom: 14px">
+            <p role="status">
+              共 {{ conflictItems.length }} 个同名冲突，已选项中还有
+              {{ unresolvedConflicts.length }} 个待处理（包含其他页）。
+            </p>
+            <div class="toolbar" style="margin-top: 10px">
+              <button
+                type="button"
+                class="btn btn-secondary"
+                :aria-pressed="activeScanTab === 'eligible' && !conflictsOnly"
+                @click="showReviewItems(false)"
+              >
+                全部可归集
+              </button>
+              <button
+                type="button"
+                class="btn btn-secondary"
+                :aria-pressed="activeScanTab === 'eligible' && conflictsOnly"
+                @click="showReviewItems(true)"
+              >
+                仅看冲突 ({{ conflictItems.length }})
+              </button>
+              <button
+                type="button"
+                class="btn btn-primary"
+                :disabled="!conflictsOpen"
+                @click="locateNextConflict"
+              >
+                定位下一个待处理
+              </button>
+            </div>
+          </div>
+
           <div
             v-if="!currentScanTabItems.length"
             class="callout"
@@ -738,7 +810,7 @@ const resolutionOptions = [
             }}
           </div>
           <div v-else class="table-wrap">
-            <table class="data-table">
+            <table ref="reviewTable" class="data-table">
               <thead>
                 <tr v-if="activeScanTab === 'eligible'">
                   <th style="width: 42px"></th>
@@ -753,7 +825,7 @@ const resolutionOptions = [
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="item in pagedScanItems" :key="item.path">
+                <tr v-for="item in pagedScanItems" :key="item.path" :data-review-path="item.path">
                   <td v-if="activeScanTab === 'eligible'">
                     <input
                       v-model="selectedPaths"
@@ -842,14 +914,16 @@ const resolutionOptions = [
             </table>
           </div>
           <AppPagination
-            v-if="currentScanTabItems.length > 15"
+            v-if="currentScanTabItems.length > 10"
             v-model:page="scanPage"
             v-model:page-size="scanPageSize"
             :total="currentScanTabItems.length"
             :page-sizes="[10, 15, 25, 50]"
             style="margin-top: 12px"
           />
-          <p v-if="conflictsOpen" class="field-error">请选择每个冲突项的处理方式后继续。</p>
+          <p v-if="conflictsOpen" class="field-error">
+            还有 {{ unresolvedConflicts.length }} 个已选冲突待处理，可点击上方“定位下一个待处理”。
+          </p>
         </section>
         <section v-else-if="step === 3">
           <h3 class="panel-title">确认归集计划</h3>
