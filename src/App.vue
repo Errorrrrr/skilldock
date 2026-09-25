@@ -1,12 +1,32 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useAppUpdater } from '@/composables/useAppUpdater'
 import AppShell from '@/components/AppShell.vue'
 import { isNative } from '@/services/api'
 import { useAppStore } from '@/stores/app'
 
 const app = useAppStore()
 const router = useRouter()
+const updater = useAppUpdater()
+watch(
+  () =>
+    app.snapshot && [
+      app.snapshot.initialized,
+      app.snapshot.settings.updateEndpoint,
+      app.snapshot.settings.updatePublicKey,
+      app.snapshot.settings.networkProxy.mode,
+      app.snapshot.settings.networkProxy.url,
+    ],
+  (next, previous) => {
+    if (!isNative || !next?.[0]) return
+    if (!previous || next.some((value, i) => value !== previous[i])) {
+      updater.invalidate()
+      updater.startMonitor()
+      void updater.automaticCheck()
+    }
+  },
+)
 watch(
   () => app.snapshot?.initialized,
   (initialized) => {
@@ -38,6 +58,7 @@ onUnmounted(() => {
   disposed = true
   stopNavigation?.()
   app.stopPolling()
+  updater.stopMonitor()
   media.removeEventListener('change', applyTheme)
 })
 </script>

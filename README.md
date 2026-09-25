@@ -1,6 +1,6 @@
 # SkillDock
 
-统一管理 Agent Skill 的跨平台桌面应用与独立 CLI。当前版本 `0.3.1`。项目已在 macOS Apple Silicon 验证原生界面和真实文件操作；Windows/Linux 的安装与真实桌面操作仍需平台验收。
+统一管理 Agent Skill 的跨平台桌面应用与独立 CLI。当前版本 `0.3.2`。项目已在 macOS Apple Silicon 验证原生界面和真实文件操作；Windows/Linux 的安装与真实桌面操作仍需平台验收。
 
 ## 单份当前内容（0.3.0）
 
@@ -26,7 +26,7 @@ SkillDock/
 
 ## 下载与更新
 
-在 [GitHub Releases](https://github.com/Errorrrrr/skilldock/releases/latest) 下载对应系统的安装包。首次使用请手动安装；后续在「设置 → 应用更新」检查版本并确认安装。
+在 [GitHub Releases](https://github.com/Errorrrrr/skilldock/releases/latest) 下载对应系统的安装包。首次使用请手动安装；后续发现新版本时会在侧栏提示，点击进入「设置 → 应用更新」确认安装，也可手动检查。设置编辑完成后自动保存。
 
 正式安装包内置更新公钥，并校验每次更新的签名。macOS 使用 ad-hoc 包签名，尚未进行 Apple 公证；Windows 尚未配置系统代码签名。开发构建没有正式更新公钥，不能直接在线升级。发布配置见 [应用发布与更新](docs/app-release.md)。
 
@@ -133,7 +133,7 @@ skilldock exec '{"action":"retry_object_cleanup","taskId":"TASK_ID"}'
 
 ## 网络代理
 
-在「设置 → 网络代理」选择跟随系统代理（默认）、直连或自定义 HTTP/HTTPS 代理。例如 `http://127.0.0.1:7897`。测试连接分别检查 GitHub HTTP 与 Git，不保存草稿；点击保存设置后，新发起的 Git、网站搜索、下载和 Skill 来源更新使用该配置。不会修改全局 Git 或系统代理，应用自身升级也使用该配置。暂不支持代理账号密码和 SOCKS 地址。系统模式读取 macOS 网络代理、Windows 当前用户 Internet Settings 或 Linux GNOME gsettings 的固定代理及绕过列表；PAC/自动发现会提示改用自定义。旧 inherit 配置按 system 处理，不再读取终端代理环境。Windows/Linux 尚未进行真机验证。
+在「设置 → 网络代理」选择跟随系统代理（默认）、直连或自定义 HTTP/HTTPS 代理。例如 `http://127.0.0.1:7897`。测试连接分别检查 GitHub HTTP 与 Git，不保存草稿；编辑完成并自动保存后，新发起的 Git、网站搜索、下载和 Skill 来源更新使用该配置。不会修改全局 Git 或系统代理，应用自身升级也使用该配置。暂不支持代理账号密码和 SOCKS 地址。系统模式读取 macOS 网络代理、Windows 当前用户 Internet Settings 或 Linux GNOME gsettings 的固定代理及绕过列表；PAC/自动发现会提示改用自定义。旧 inherit 配置按 system 处理，不再读取终端代理环境。Windows/Linux 尚未进行真机验证。
 
 ## CLI 示例
 

@@ -4,9 +4,10 @@ import { libraryDirectory } from '@/services/librarySkills'
 import AppUpdatePanel from '@/components/AppUpdatePanel.vue'
 import { useAppUpdater } from '@/composables/useAppUpdater'
 import AgentDirectories from '@/components/AgentDirectories.vue'
-import { cloneAgentProfiles } from '@/services/agentProfiles'
+import { useSettingsEditor } from '@/stores/settingsEditor'
+import { useRoute, useRouter } from 'vue-router'
 import AppSelect from '@/components/ui/AppSelect.vue'
-import { ref, watch, onMounted } from 'vue'
+import { computed, ref, watch, onMounted } from 'vue'
 import {
   Plus,
   Trash2,
@@ -25,10 +26,11 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import DirectoryField from '@/components/DirectoryField.vue'
 import { useAppStore } from '@/stores/app'
 import { api } from '@/services/api'
-import { defaultCatalogSites, normalizeCatalogSites, catalogSiteKey } from '@/services/catalogSites'
-import type { CatalogSite } from '@/services/types'
 
 const app = useAppStore()
+const editor = useSettingsEditor()
+const route = useRoute()
+const router = useRouter()
 const section = ref<
   'storage' | 'directories' | 'sites' | 'updates' | 'app' | 'general' | 'network'
 >('storage')
@@ -36,11 +38,26 @@ const migrateOpen = ref(false)
 const migrateConfirm = ref(false)
 const newPath = ref('')
 const busy = ref(false)
-const { busy: appUpdateBusy } = useAppUpdater()
-const catalogSites = ref<CatalogSite[]>(normalizeCatalogSites(defaultCatalogSites))
-const siteError = ref('')
-const proxyMode = ref('system')
-const proxyUrl = ref('')
+const { busy: appUpdateBusy, phase: appUpdatePhase } = useAppUpdater()
+const catalogSites = computed({
+  get: () => editor.draft.catalogSites,
+  set: (value) => {
+    editor.draft.catalogSites = value
+  },
+})
+const siteError = computed(() => editor.errors.sites || '')
+const proxyMode = computed({
+  get: () => editor.draft.networkProxy.mode,
+  set: (value) => {
+    editor.draft.networkProxy.mode = value
+  },
+})
+const proxyUrl = computed({
+  get: () => editor.draft.networkProxy.url,
+  set: (value) => {
+    editor.draft.networkProxy.url = value
+  },
+})
 const proxyTesting = ref(false)
 const proxyMessage = ref('')
 const proxyError = ref(false)
@@ -61,38 +78,61 @@ async function testProxy() {
     proxyTesting.value = false
   }
 }
-const agentProfiles = ref(cloneAgentProfiles())
+const agentProfiles = computed({
+  get: () => editor.draft.agentProfiles,
+  set: (value) => {
+    editor.draft.agentProfiles = value
+  },
+})
 const autoStart = ref(false)
+const autoStartBusy = ref(false)
 const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone
-const closeToTray = ref(true)
-const theme = ref('light')
-const updateMode = ref('off')
-const endpoint = ref('')
-const publicKey = ref('')
+const closeToTray = computed({
+  get: () => editor.draft.closeToTray,
+  set: (value) => {
+    editor.draft.closeToTray = value
+  },
+})
+const theme = computed({
+  get: () => editor.draft.theme,
+  set: (value) => {
+    editor.draft.theme = value
+  },
+})
+const updateMode = computed({
+  get: () => editor.draft.updateMode,
+  set: (value) => {
+    editor.draft.updateMode = value
+  },
+})
+const endpoint = computed({
+  get: () => editor.draft.updateEndpoint,
+  set: (value) => {
+    editor.draft.updateEndpoint = value
+  },
+})
+const publicKey = computed({
+  get: () => editor.draft.updatePublicKey,
+  set: (value) => {
+    editor.draft.updatePublicKey = value
+  },
+})
+const saveErrors = computed(() => Object.values(editor.errors).filter(Boolean))
 watch(
-  () => app.snapshot?.settings,
-  (s, previous) => {
-    if (!s) return
-    // Polling must not overwrite a website row while it is being edited.
-    if (JSON.stringify(s.catalogSites) !== JSON.stringify(previous?.catalogSites)) {
-      catalogSites.value = normalizeCatalogSites(s.catalogSites || defaultCatalogSites)
-    }
-    if (JSON.stringify(s.agentProfiles) !== JSON.stringify(previous?.agentProfiles))
-      agentProfiles.value = cloneAgentProfiles(s.agentProfiles)
-    if (JSON.stringify(s.networkProxy) !== JSON.stringify(previous?.networkProxy)) {
-      proxyMode.value =
-        !s.networkProxy?.mode || s.networkProxy.mode === 'inherit' ? 'system' : s.networkProxy.mode
-      proxyUrl.value = s.networkProxy?.url || ''
-    }
-    closeToTray.value = s.closeToTray
-    theme.value = s.theme
-    updateMode.value = s.updateMode
-    if (!previous || s.updateEndpoint !== previous.updateEndpoint) endpoint.value = s.updateEndpoint
-    if (!previous || s.updatePublicKey !== previous.updatePublicKey)
-      publicKey.value = s.updatePublicKey
+  () => route.query.section,
+  (value) => {
+    if (
+      typeof value === 'string' &&
+      ['storage', 'directories', 'sites', 'updates', 'app', 'general', 'network'].includes(value)
+    )
+      section.value = value as typeof section.value
   },
   { immediate: true },
 )
+watch(section, (value) => {
+  if (route.query.section !== value)
+    void router.replace({ query: { ...route.query, section: value } })
+})
 onMounted(async () => {
   if (app.isNative) {
     try {
@@ -104,86 +144,22 @@ onMounted(async () => {
   }
 })
 async function toggleAutoStart() {
+  if (autoStartBusy.value) return
   if (!app.isNative) {
     autoStart.value = !autoStart.value
     return
   }
   try {
+    autoStartBusy.value = true
     const { enable, disable, isEnabled } = await import('@tauri-apps/plugin-autostart')
     if (autoStart.value) await disable()
     else await enable()
     autoStart.value = await isEnabled()
   } catch (e) {
     app.error = String(e)
+  } finally {
+    autoStartBusy.value = false
   }
-}
-async function saveSettings() {
-  if (appUpdateBusy.value) return
-  if (!!endpoint.value.trim() !== !!publicKey.value.trim()) {
-    app.error = '请同时填写自定义更新地址和公钥，或同时清空以使用官方源'
-    section.value = 'app'
-    return
-  }
-  siteError.value = ''
-  for (const profile of agentProfiles.value) {
-    for (const paths of [profile.userPaths, profile.projectPaths]) {
-      const normalized = paths.map((path) => path.trim().replace(/[\\/]+$/, ''))
-      if (normalized.some((path) => !path) || new Set(normalized).size !== normalized.length) {
-        app.error = `${profile.name} 的目录不能为空或重复`
-        section.value = 'directories'
-        return
-      }
-    }
-  }
-  const sites = catalogSites.value.map((site) => ({ name: site.name.trim(), url: site.url.trim() }))
-  const urls = new Set<string>()
-  for (const [index, site] of sites.entries()) {
-    if (!site.name || site.name.length > 100) {
-      siteError.value = `第 ${index + 1} 个网站请填写名称（最多 100 个字符）`
-      break
-    }
-    try {
-      const url = new URL(site.url)
-      if (
-        url.protocol !== 'https:' ||
-        !url.hostname ||
-        url.username ||
-        url.password ||
-        url.search ||
-        url.hash
-      )
-        throw new Error()
-      site.url = url.href.replace(/\/+$/, '')
-      const key = catalogSiteKey(site.url)
-      if (urls.has(key)) {
-        siteError.value = `第 ${index + 1} 个网站的网址已存在`
-        break
-      }
-      urls.add(key)
-    } catch {
-      siteError.value = `第 ${index + 1} 个网站请填写完整的 HTTPS 网址，不含凭据、查询参数或片段`
-      break
-    }
-  }
-  if (!sites.length || sites.length > 8) siteError.value = '请配置 1 至 8 个网站'
-  if (siteError.value) {
-    section.value = 'sites'
-    return
-  }
-  await app.mutate(
-    () =>
-      api.settings({
-        networkProxy: { mode: proxyMode.value, url: proxyUrl.value.trim() },
-        catalogSites: sites,
-        agentProfiles: cloneAgentProfiles(agentProfiles.value),
-        closeToTray: closeToTray.value,
-        theme: theme.value,
-        updateMode: updateMode.value,
-        updateEndpoint: endpoint.value,
-        updatePublicKey: publicKey.value,
-      }),
-    '设置已保存',
-  )
 }
 function startMigrate() {
   newPath.value = libraryDirectory(app.snapshot)
@@ -226,10 +202,27 @@ const themeOptions = [
     <header class="page-heading">
       <div>
         <h1 class="page-title">设置</h1>
-        <p class="page-subtitle">配置存储、来源、更新与桌面应用行为。</p>
+        <p class="page-subtitle">编辑完成后自动保存。迁移目录与安装更新仍需单独确认。</p>
       </div>
-      <Button variant="primary" :disabled="appUpdateBusy" @click="saveSettings">保存设置</Button>
+      <span class="subtle" role="status" aria-live="polite">{{
+        editor.saving
+          ? '正在自动保存…'
+          : saveErrors.length
+            ? '部分设置未保存'
+            : editor.dirty
+              ? appUpdateBusy
+                ? '更新结束后自动保存'
+                : '等待自动保存…'
+              : '所有设置已保存'
+      }}</span>
     </header>
+    <div v-if="saveErrors.length" class="callout warning" role="alert" style="margin-bottom: 12px">
+      <p v-for="message in saveErrors" :key="message">{{ message }}</p>
+      <p>未保存的编辑会保留；请补全或修正后自动保存，网络或文件错误可重试。</p>
+      <Button size="sm" :disabled="editor.saving || appUpdateBusy" @click="editor.retry"
+        >重试自动保存</Button
+      >
+    </div>
     <div class="settings-layout">
       <nav class="panel settings-nav">
         <button :class="{ active: section === 'network' }" @click="section = 'network'">
@@ -247,14 +240,18 @@ const themeOptions = [
           常规与外观
         </button>
       </nav>
-      <section class="panel settings-section">
+      <fieldset
+        class="panel settings-section"
+        :disabled="appUpdateBusy && appUpdatePhase !== 'checking'"
+      >
         <AgentDirectories v-if="section === 'directories'" v-model="agentProfiles" />
         <template v-else-if="section === 'network'">
           <div class="panel-header" style="padding: 0 0 13px">
             <h3 class="panel-title">网络代理</h3>
           </div>
           <p class="choice-meta">
-            用于 Git 导入、网站检索、Skill 下载和来源更新。保存后新请求立即生效，不修改系统代理。
+            用于 Git 导入、网站检索、Skill
+            下载和来源更新。自动保存后新请求立即生效，不修改系统代理。
           </p>
           <label class="field"
             ><span class="field-label">连接方式</span>
@@ -285,9 +282,7 @@ const themeOptions = [
           <Button style="margin-top: 16px" :disabled="proxyTesting" @click="testProxy">{{
             proxyTesting ? '正在测试 HTTP 与 Git…' : '测试连接'
           }}</Button>
-          <p class="choice-meta">
-            测试当前填写的配置，无需先保存；分别检查 GitHub 的 HTTP 和 Git 连接。
-          </p>
+          <p class="choice-meta">测试当前填写的配置；分别检查 GitHub 的 HTTP 和 Git 连接。</p>
           <p v-if="proxyMessage" :class="proxyError ? 'field-error' : 'callout'" role="status">
             {{ proxyMessage }}
           </p>
@@ -419,6 +414,7 @@ const themeOptions = [
         >
         <AppUpdatePanel
           v-else-if="section === 'app'"
+          :settings-pending="editor.dirty || editor.saving"
           v-model:endpoint="endpoint"
           v-model:public-key="publicKey"
         />
@@ -462,6 +458,7 @@ const themeOptions = [
               class="switch"
               :class="{ on: autoStart }"
               :aria-pressed="autoStart"
+              :disabled="autoStartBusy"
               aria-label="开机启动"
               @click="toggleAutoStart"
             />
@@ -470,7 +467,7 @@ const themeOptions = [
             关闭窗口后可从状态栏或托盘重新打开。菜单中的“完全退出”会结束后台检查。
           </div></template
         >
-      </section>
+      </fieldset>
     </div>
     <AppDialog
       v-model:open="migrateOpen"
@@ -521,6 +518,10 @@ const themeOptions = [
 </template>
 
 <style scoped>
+.settings-section {
+  min-width: 0;
+  margin: 0;
+}
 .catalog-sites-editor {
   display: grid;
   gap: 16px;

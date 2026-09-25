@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onUnmounted } from 'vue'
 import { AppWindow, RefreshCcw, Download, AlertTriangle, ShieldCheck } from 'lucide-vue-next'
 import { useAppStore } from '@/stores/app'
 import { useAppUpdater } from '@/composables/useAppUpdater'
@@ -7,7 +7,7 @@ import Button from './ui/Button.vue'
 import Badge from './ui/Badge.vue'
 import ConfirmDialog from './ui/ConfirmDialog.vue'
 
-const props = defineProps<{ endpoint: string; publicKey: string }>()
+const props = defineProps<{ endpoint: string; publicKey: string; settingsPending?: boolean }>()
 const emit = defineEmits<{
   'update:endpoint': [value: string]
   'update:publicKey': [value: string]
@@ -15,6 +15,7 @@ const emit = defineEmits<{
 const app = useAppStore()
 const {
   result,
+  confirming: confirmOpen,
   error,
   phase,
   progress,
@@ -26,10 +27,13 @@ const {
   check,
   install,
 } = useAppUpdater()
-const confirmOpen = ref(false)
+onUnmounted(() => {
+  confirmOpen.value = false
+})
 const customOpen = ref(false)
 const dirty = computed(
   () =>
+    !!props.settingsPending ||
     props.endpoint.trim() !== (app.snapshot?.settings.updateEndpoint || '').trim() ||
     props.publicKey.trim() !== (app.snapshot?.settings.updatePublicKey || '').trim(),
 )
@@ -99,7 +103,7 @@ function restoreOfficial() {
       检查应用新版本，确认后安装并重启。使用「网络代理」设置连接发布源。
     </p>
     <div v-if="dirty" class="callout warning">
-      更新源配置已修改，请先点击右上角「保存设置」，再检查更新。
+      设置尚未自动保存完成。请补全有误的字段或等待保存后，再检查和安装更新。
     </div>
     <div v-if="error" class="app-update-error" role="alert">
       <AlertTriangle /><span>{{ error }}</span>
@@ -164,6 +168,7 @@ function restoreOfficial() {
     </details>
     <ConfirmDialog
       v-model:open="confirmOpen"
+      :busy="busy || dirty"
       title="安装更新并重启"
       :description="confirmation"
       confirm-text="安装并重启"

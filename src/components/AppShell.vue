@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useAppUpdater } from '@/composables/useAppUpdater'
+import SettingsSaveStatus from '@/components/SettingsSaveStatus.vue'
 import { sourceUpdateState } from '@/services/sourceUpdates'
 import { computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
@@ -20,6 +22,7 @@ import { useAppStore } from '@/stores/app'
 import { librarySkillCount } from '@/services/librarySkills'
 const app = useAppStore()
 const router = useRouter()
+const { result: applicationUpdate } = useAppUpdater()
 const libraryCount = computed(() => librarySkillCount(app.snapshot))
 const updateCount = computed(
   () =>
@@ -91,6 +94,16 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       </nav>
       <div class="nav-spacer" />
       <nav class="sidebar-bottom" aria-label="应用">
+        <RouterLink
+          v-if="applicationUpdate?.available"
+          to="/settings?section=app"
+          class="nav-item app-update-link"
+          :title="`发现新版本 ${applicationUpdate.version}，前往更新`"
+        >
+          <RefreshCcw aria-hidden="true" /><span class="nav-text"
+            >新版本 {{ applicationUpdate.version }}</span
+          >
+        </RouterLink>
         <RouterLink to="/tasks" class="nav-item" title="任务记录" aria-label="任务记录"
           ><ListChecks aria-hidden="true" /><span class="nav-text">任务记录</span
           ><span v-if="app.activeTasks.length" class="nav-count">{{
@@ -107,6 +120,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
     </aside>
     <main id="main-content" class="workspace" tabindex="-1">
       <div class="content">
+        <SettingsSaveStatus v-if="app.snapshot" />
         <div v-if="app.recoverableTasks.length" class="recovery-bar" role="status">
           <CircleAlert />有 {{ app.recoverableTasks.length }} 个任务需要恢复。<RouterLink
             class="banner-action"
@@ -147,3 +161,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
     </main>
   </div>
 </template>
+
+<style scoped>
+.app-update-link {
+  color: var(--blue);
+  background: var(--blue-soft);
+}
+</style>
