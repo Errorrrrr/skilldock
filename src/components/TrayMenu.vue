@@ -22,6 +22,7 @@ const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform
 const cmdKey = isMac ? '⌘' : 'Ctrl+'
 
 const status = ref<TrayStatus>({
+  version: '',
   paused: false,
   active: false,
   skills: 0,
@@ -307,7 +308,9 @@ onUnmounted(() => {
           </div>
         </div>
         <div v-else class="tray-hint">
-          <span>SkillDock <span class="tray-version">v0.1.0</span></span
+          <span
+            >SkillDock
+            <span v-if="status.version" class="tray-version">v{{ status.version }}</span></span
           ><span><kbd>Esc</kbd> 收起</span>
         </div>
       </footer>

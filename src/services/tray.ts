@@ -1,8 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
 import { isNative } from './api'
+import { version as appVersion } from '../../package.json'
 import { librarySkillCount } from './librarySkills'
 
 export interface TrayStatus {
+  version: string
   paused: boolean
   active: boolean
   skills: number
@@ -20,6 +22,7 @@ export async function trayAction(
   const { demoSnapshot } = await import('./demo')
   const snapshot = await demoSnapshot()
   return {
+    version: appVersion,
     paused: demoPaused,
     active: false,
     skills: librarySkillCount(snapshot),

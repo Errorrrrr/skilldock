@@ -129,13 +129,12 @@ async fn tray_action(
         _ => return Err("未知菜单操作".into()),
     }
     let snapshot = state.engine.snapshot().map_err(|e| e.to_string())?;
-    Ok(
-        json!({"paused":state.paused.load(Ordering::SeqCst), "active":state.active.load(Ordering::SeqCst),
+    Ok(json!({"version":app.package_info().version.to_string(),
+        "paused":state.paused.load(Ordering::SeqCst), "active":state.active.load(Ordering::SeqCst),
         "skills":snapshot.skills.iter().map(|skill| &skill.name).collect::<std::collections::BTreeSet<_>>().len(), "sources":snapshot.sources.iter().filter(|source| source.supports_remote_updates()).count(),
         "scheduled":snapshot.sources.iter().filter(|s| s.supports_remote_updates() && (s.policy.mode == "notify" || s.policy.mode == "auto")).count(),
         "automatic":snapshot.sources.iter().filter(|s| s.supports_remote_updates() && s.policy.mode == "auto").count(),
-        "theme":snapshot.settings.theme}),
-    )
+        "theme":snapshot.settings.theme}))
 }
 fn show(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
