@@ -1,6 +1,6 @@
 # SkillDock
 
-统一管理 Agent Skill 的跨平台桌面应用与独立 CLI。当前版本 `0.3.2`。项目已在 macOS Apple Silicon 验证原生界面和真实文件操作；Windows/Linux 的安装与真实桌面操作仍需平台验收。
+统一管理 Agent Skill 的跨平台桌面应用与独立 CLI。当前版本 `0.3.6`。项目已在 macOS Apple Silicon 验证原生界面和真实文件操作；Windows/Linux 的安装与真实桌面操作仍需平台验收。
 
 ## 单份当前内容（0.3.0）
 
@@ -145,6 +145,8 @@ skilldock scan /absolute/path/to/existing-skills
 skilldock git https://github.com/vercel-labs/skills --subdir skills
 skilldock search vue --site clawhub --site skillhub --site skills.sh
 skilldock install find-skill-skillhub --site skillhub
+skilldock install ./my-skills --to codex --to workbuddy --json
+skilldock install https://github.com/owner/repo --subdir skills --to codex --json
 skilldock target 'My Agent' /absolute/path/to/agent/skills
 skilldock list --json
 skilldock plan --skill SKILL_ID --target TARGET_ID
@@ -153,6 +155,8 @@ skilldock diagnose
 ```
 
 `--config-dir /absolute/test/config` 可创建隔离实例。`--json` 输出机器可读结果，错误返回非零退出码。GUI 和 CLI 复用同一个 Rust 核心；完整操作也可通过 `skilldock exec '{"action":"..."}'` 调用。
+
+`install` 支持网站标识、Git URL 和本地目录；重复 `--to` 可在入库后分发给多个工具。未传目标时仅入库。输出包含 `status`、`skillIds` 与各目标结果，分发部分失败返回非零退出码并保留已完成步骤；不自动覆盖同名内容。旧脚本如需完整 Snapshot 请用 `list --json`。Agent 接入 Skill、规则模板及配置方式见 [Agent 统一安装入口](docs/agent-cli-integration.md)。
 
 新归集流程先调用 `preview_collection`，再把返回的 `revision`、`fingerprint` 与审阅选择交给 `collect_skills`，见[接口说明](docs/management-optimization-2026-09-25.md#接口)。原 `skilldock import` / `import_folder` 保留兼容，不提供新的同名审阅计划；需要新规则时使用上述两阶段接口。
 

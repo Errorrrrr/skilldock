@@ -14,3 +14,6 @@ clap = { version = "4", features = ["derive"] }
 tokio.workspace = true
 serde_json.workspace = true
 tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

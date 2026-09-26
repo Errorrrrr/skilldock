@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 use skilldock_core::Engine;
 use std::path::PathBuf;
+mod install;
 
 #[derive(Parser)]
 #[command(
@@ -50,11 +51,8 @@ enum Command {
         #[arg(long = "site")]
         sites: Vec<String>,
     },
-    Install {
-        slug: String,
-        #[arg(long, default_value = "clawhub")]
-        site: String,
-    },
+    #[command(about = "从网站、Git 或本地目录入库，并分发到指定工具")]
+    Install(install::InstallArgs),
     Target {
         name: String,
         path: String,
@@ -105,6 +103,21 @@ async fn main() {
         .with_writer(std::io::stderr)
         .with_env_filter("warn")
         .init();
+    if let Command::Install(input) = &args.command {
+        let report = install::run(args.config_dir.clone(), input).await;
+        println!(
+            "{}",
+            if args.json {
+                serde_json::to_string(&report).unwrap()
+            } else {
+                serde_json::to_string_pretty(&report).unwrap()
+            }
+        );
+        if report["status"] != "succeeded" {
+            std::process::exit(1);
+        }
+        return;
+    }
     let request = match args.command {
         Command::Init { path } => json!({"action":"configure","path":path}),
         Command::List => json!({"action":"snapshot"}),
@@ -123,9 +136,7 @@ async fn main() {
         Command::Search { query, sites } => {
             json!({"action":"search_catalog","query":query,"sites":sites})
         }
-        Command::Install { slug, site } => {
-            json!({"action":"install_catalog","slug":slug,"site":site})
-        }
+        Command::Install(_) => unreachable!(),
         Command::Target {
             name,
             path,

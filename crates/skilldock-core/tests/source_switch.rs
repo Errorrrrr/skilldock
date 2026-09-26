@@ -47,6 +47,8 @@ impl F {
         // Existing libraries keep per-target source choices until explicit migration.
         legacy.schema_version = 2;
         legacy.settings.backup_retention = 1;
+        // The Git fixture is local; host proxy settings must not affect this test.
+        legacy.settings.network_proxy.mode = "direct".into();
         skilldock_core::files::atomic_json(
             &PathBuf::from(&legacy.storage_root).join("state.json"),
             &legacy,

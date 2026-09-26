@@ -1028,6 +1028,11 @@ fn validate_catalog_version(version: &str) -> Result<()> {
     Ok(())
 }
 
+/// The canonical catalog identity used for stored sources and install results.
+pub fn canonical_catalog_site(site: &str) -> Result<String> {
+    Ok(normalize_site(site)?.canonical)
+}
+
 fn normalize_site(site: &str) -> Result<SiteEndpoint> {
     let site = site.trim();
     let lowered = site.to_ascii_lowercase();
