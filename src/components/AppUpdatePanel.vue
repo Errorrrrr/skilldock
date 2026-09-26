@@ -65,7 +65,23 @@ watch(
     if (!previous || next.some((value, index) => value !== previous[index])) {
       confirmOpen.value = false
       customOpen.value = !!next[0] || !!next[1]
-      void loadInfo()
+      if (previous) void loadInfo()
+    }
+  },
+  { immediate: true },
+)
+// Each panel mount represents a new visit, independent of the six-hour background interval.
+let entryCheckPending = true
+watch(
+  [() => !!app.snapshot, dirty, phase, confirmOpen],
+  ([ready, settingsDirty, currentPhase, confirming]) => {
+    if (!entryCheckPending || !ready || settingsDirty || confirming) return
+    if (currentPhase === 'checking') {
+      // Reuse a check already in progress instead of issuing a duplicate request.
+      entryCheckPending = false
+    } else if (currentPhase === 'idle') {
+      entryCheckPending = false
+      void check()
     }
   },
   { immediate: true },
