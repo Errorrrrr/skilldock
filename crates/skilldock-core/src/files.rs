@@ -259,25 +259,47 @@ pub fn scan(path: &Path) -> Result<ScanResult> {
     }
     Ok(result)
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DigestMode {
+    Full,
+    FinderOnly,
+    RuntimeCaches,
+}
+
 pub fn tree_digest(root: &Path) -> Result<String> {
-    digest_tree(root, false, &[])
+    digest_tree(root, DigestMode::Full, &[])
 }
 
 pub fn content_digest(root: &Path) -> Result<String> {
-    digest_tree(root, true, &[])
+    digest_tree(root, DigestMode::RuntimeCaches, &[])
 }
 
 pub fn snapshot_matches(root: &Path, expected: &str) -> Result<bool> {
-    for include_lock in [false, true] {
-        let generated = generated_python_paths(root, include_lock)?;
-        if !generated.is_empty() && digest_tree(root, true, &generated)? == expected {
+    // Keep the pre-cache-filter algorithm: existing object IDs are immutable.
+    for mode in [DigestMode::RuntimeCaches, DigestMode::FinderOnly] {
+        for include_lock in [false, true] {
+            let generated = generated_python_paths(root, include_lock)?;
+            if !generated.is_empty() && digest_tree(root, mode, &generated)? == expected {
+                return Ok(true);
+            }
+        }
+        if digest_tree(root, mode, &[])? == expected {
             return Ok(true);
         }
     }
-    Ok(tree_digest(root)? == expected || content_digest(root)? == expected)
+    Ok(tree_digest(root)? == expected)
 }
 
-fn digest_tree(root: &Path, ignore_finder: bool, excluded: &[PathBuf]) -> Result<String> {
+fn is_runtime_cache_dir(e: &walkdir::DirEntry) -> bool {
+    e.depth() > 0
+        && e.file_type().is_dir()
+        && matches!(
+            e.file_name().to_str(),
+            Some("__pycache__" | ".pytest_cache" | ".ruff_cache" | ".mypy_cache")
+        )
+}
+
+fn digest_tree(root: &Path, mode: DigestMode, excluded: &[PathBuf]) -> Result<String> {
     let canonical = fs::canonicalize(root)?;
     if fs::symlink_metadata(root)?.file_type().is_symlink() {
         return fail("不能把软链自身作为新来源，请选择原始内容目录");
@@ -289,12 +311,17 @@ fn digest_tree(root: &Path, ignore_finder: bool, excluded: &[PathBuf]) -> Result
         .follow_links(false)
         .sort_by_file_name()
         .into_iter()
-        .filter_entry(|e| !excluded.iter().any(|p| e.path().starts_with(p)))
+        .filter_entry(|e| {
+            if mode == DigestMode::RuntimeCaches && is_runtime_cache_dir(e) {
+                return false;
+            }
+            !excluded.iter().any(|p| e.path().starts_with(p))
+        })
     {
         let e = entry.map_err(|e| crate::error::Error::Message(e.to_string()))?;
         let rel = e.path().strip_prefix(root).unwrap();
-        // Finder writes these view preferences while browsing an otherwise unchanged Skill.
-        if ignore_finder && e.file_type().is_file() && e.file_name() == ".DS_Store" {
+        // Standalone bytecode and other ordinary files remain executable content.
+        if mode != DigestMode::Full && e.file_type().is_file() && e.file_name() == ".DS_Store" {
             continue;
         }
         if rel.as_os_str().is_empty() {
@@ -364,8 +391,10 @@ pub fn local_import_exclusions(root: &Path) -> Result<Vec<PathBuf>> {
         }
         let name = entry.file_name().to_string_lossy();
         if name == ".git"
-            || (matches!(name.as_ref(), ".venv" | "__pycache__")
-                && (entry.file_type().is_dir() || entry.file_type().is_symlink()))
+            || (matches!(
+                name.as_ref(),
+                ".venv" | "__pycache__" | ".pytest_cache" | ".ruff_cache" | ".mypy_cache"
+            ) && (entry.file_type().is_dir() || entry.file_type().is_symlink()))
         {
             excluded.push(entry.path().to_path_buf());
             if entry.file_type().is_dir() {

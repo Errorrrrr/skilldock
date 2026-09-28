@@ -103,6 +103,103 @@ fn finder_metadata_is_ignored_only_for_regular_files() {
     assert!(!files::snapshot_matches(temp.path(), &digest).unwrap());
 }
 
+#[test]
+fn runtime_noise_in_subdirectories_is_ignored_for_content_digest() {
+    let temp = tempfile::tempdir().unwrap();
+    let base = fs::canonicalize(temp.path()).unwrap();
+    fs::create_dir_all(base.join("tools/sub")).unwrap();
+    fs::write(base.join("SKILL.md"), "original").unwrap();
+    fs::write(base.join("tools/tool.py"), "print('hello')").unwrap();
+    let digest = files::content_digest(temp.path()).unwrap();
+
+    // Add __pycache__ and .pyc in tools/
+    fs::create_dir_all(base.join("tools/__pycache__")).unwrap();
+    fs::write(
+        base.join("tools/__pycache__/tool.cpython-311.pyc"),
+        "bytecode",
+    )
+    .unwrap();
+
+    // Add .DS_Store in tools/sub/
+    fs::write(base.join("tools/sub/.DS_Store"), "sub view options").unwrap();
+
+    // Add .pytest_cache
+    fs::create_dir_all(base.join(".pytest_cache")).unwrap();
+    fs::write(base.join(".pytest_cache/cache.json"), "cache").unwrap();
+
+    // Snapshot should still match!
+    assert!(files::snapshot_matches(temp.path(), &digest).unwrap());
+}
+
+#[cfg(unix)]
+#[test]
+fn ignored_cache_is_checked_before_legacy_digest_validation() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::write(temp.path().join("SKILL.md"), "original").unwrap();
+    let digest = files::content_digest(temp.path()).unwrap();
+    let cache = temp.path().join("__pycache__");
+    fs::create_dir(&cache).unwrap();
+    std::os::unix::fs::symlink(temp.path().join("SKILL.md"), cache.join("link")).unwrap();
+    assert!(files::snapshot_matches(temp.path(), &digest).unwrap());
+    assert!(files::tree_digest(temp.path()).is_err());
+}
+
+#[test]
+fn legacy_digest_survives_finder_metadata_without_hiding_content_changes() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    fs::write(root.join("SKILL.md"), "original").unwrap();
+    fs::create_dir(root.join(".pytest_cache")).unwrap();
+    fs::write(root.join(".pytest_cache/state"), "legacy cache").unwrap();
+    fs::write(root.join("module.pyc"), "shipped bytecode").unwrap();
+    // With no .DS_Store, the full digest is exactly the pre-filter content digest.
+    let legacy = files::tree_digest(root).unwrap();
+    assert_ne!(legacy, files::content_digest(root).unwrap());
+    fs::write(root.join(".DS_Store"), "Finder metadata").unwrap();
+    assert!(files::snapshot_matches(root, &legacy).unwrap());
+    fs::write(root.join("module.pyc"), "changed bytecode").unwrap();
+    assert!(!files::snapshot_matches(root, &legacy).unwrap());
+}
+
+#[test]
+fn standalone_bytecode_and_regular_files_remain_part_of_content() {
+    for name in [
+        "module.pyc",
+        "module.pyo",
+        "desktop.ini",
+        "Thumbs.db",
+        "._module",
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("SKILL.md"), "original").unwrap();
+        let path = temp.path().join(name);
+        fs::write(&path, "original file").unwrap();
+        let digest = files::content_digest(temp.path()).unwrap();
+        fs::write(&path, "changed file").unwrap();
+        assert!(
+            !files::snapshot_matches(temp.path(), &digest).unwrap(),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn cache_named_root_is_not_skipped_and_backup_digests_keep_cache_files() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("__pycache__");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("SKILL.md"), "original").unwrap();
+    let digest = files::content_digest(&root).unwrap();
+    fs::write(root.join("SKILL.md"), "changed").unwrap();
+    assert_ne!(digest, files::content_digest(&root).unwrap());
+    let before = files::tree_digest(&root).unwrap();
+    let manifest = files::manifest_digest(&root).unwrap();
+    fs::create_dir(root.join(".pytest_cache")).unwrap();
+    fs::write(root.join(".pytest_cache/state"), "cache").unwrap();
+    assert_ne!(before, files::tree_digest(&root).unwrap());
+    assert_ne!(manifest, files::manifest_digest(&root).unwrap());
+}
+
 #[tokio::test]
 async fn skills_view_is_maintained_automatically() {
     let temp = tempfile::tempdir().unwrap();
