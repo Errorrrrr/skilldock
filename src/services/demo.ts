@@ -873,6 +873,8 @@ export async function demoPreviewSingleContent() {
     bindings: structuredClone(state.bindings),
     presets: structuredClone(state.presets),
     backupCount: state.contentBackups.length,
+    directoryRepairs: [],
+    snapshotIssues: [],
   }
 }
 export async function demoEnableSingleContent(

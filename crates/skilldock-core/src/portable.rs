@@ -1,5 +1,49 @@
 use crate::*;
+use std::collections::BTreeSet;
 use std::io::{Read, Write};
+
+fn known_retired_snapshots(root: &Path, state: &Snapshot) -> Result<BTreeSet<String>> {
+    let active: BTreeSet<_> = state
+        .skills
+        .iter()
+        .chain(state.presets.iter().flat_map(|p| p.locks.values()))
+        .chain(state.content_backups.iter().flat_map(|b| &b.skills))
+        .filter(|s| s.external_path.is_none())
+        .map(|s| s.bundle_digest.clone())
+        .chain(
+            state
+                .bindings
+                .iter()
+                .filter(|b| b.external_path.is_none())
+                .map(|b| b.digest.clone()),
+        )
+        .collect();
+    let mut retired = BTreeSet::new();
+    for entry in fs::read_dir(root.join("transactions"))? {
+        let path = entry?.path();
+        if path.extension().and_then(|v| v.to_str()) != Some("json") {
+            continue;
+        }
+        let journal: Journal = serde_json::from_slice(&fs::read(path)?)?;
+        if !matches!(
+            journal.status.as_str(),
+            "committed" | "expired" | "restored"
+        ) {
+            continue;
+        }
+        for snapshot in [&journal.before, &journal.after] {
+            for skill in &snapshot.skills {
+                if skill.external_path.is_none()
+                    && !skill.bundle_digest.is_empty()
+                    && !active.contains(&skill.bundle_digest)
+                {
+                    retired.insert(skill.bundle_digest.clone());
+                }
+            }
+        }
+    }
+    Ok(retired)
+}
 
 #[derive(Serialize, Deserialize)]
 struct Migration {
@@ -238,11 +282,18 @@ impl Engine {
                 backup_digest: None,
             });
         }
-        for c in &changes {
-            if fs::read_link(&c.path).ok() != c.before
-                || (c.before.is_none() && files::exists(&c.path))
-            {
-                return fail("有异常链接，请先诊断");
+        for c in &mut changes {
+            if let Some(expected) = &c.before {
+                let raw = fs::read_link(&c.path).map_err(|_| {
+                    error::Error::Message(format!("迁移链接已变化：{}", c.path.display()))
+                })?;
+                if fs::canonicalize(&c.path)? != fs::canonicalize(expected)? {
+                    return fail(format!("迁移链接指向其他内容：{}", c.path.display()));
+                }
+                // Preserve the literal relative/indirect target for apply and rollback.
+                c.before = Some(raw);
+            } else if files::exists(&c.path) {
+                return fail(format!("迁移位置已被占用：{}", c.path.display()));
             }
         }
         let mut migration = Migration {
@@ -267,16 +318,32 @@ impl Engine {
             } else {
                 files::copy_tree(&old_root, &new_root)?;
             }
+            let mut retired_snapshots = None;
             for e in fs::read_dir(new_root.join("objects"))? {
                 let e = e?;
                 if !e.path().join("tree").is_dir() {
                     continue;
                 }
-                if !files::snapshot_matches(
-                    &e.path().join("tree"),
-                    &e.file_name().to_string_lossy(),
-                )? {
-                    return fail("迁移内容校验失败");
+                let digest = e.file_name().to_string_lossy().to_string();
+                let tree = e.path().join("tree");
+                if !files::snapshot_matches(&tree, &digest)? {
+                    if state.schema_version >= 3 && retired_snapshots.is_none() {
+                        retired_snapshots = Some(known_retired_snapshots(&old_root, &state)?);
+                    }
+                    // A retired object can contain edits preserved by refresh or
+                    // backup protection. Carry it verbatim, never use it as current
+                    // content or silently delete it to make migration pass.
+                    let retained = retired_snapshots
+                        .as_ref()
+                        .is_some_and(|s| s.contains(&digest));
+                    if !retained
+                        || files::manifest_digest(&tree)?
+                            != files::manifest_digest(
+                                &old_root.join("objects").join(&digest).join("tree"),
+                            )?
+                    {
+                        return fail(format!("迁移内容校验失败：{digest}"));
+                    }
                 }
             }
             for c in &migration.changes {

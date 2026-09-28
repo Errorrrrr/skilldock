@@ -96,7 +96,8 @@ fn unmanaged_link_inside_managed_source_blocks_migration_until_removed() {
         .migrate_storage(destination.to_str().unwrap())
         .unwrap_err();
 
-    assert!(error.to_string().contains("保留链接仍指向当前统一库"));
+    assert!(error.to_string().contains("外部链接指向旧库"));
+    assert!(error.to_string().contains(external_link.to_str().unwrap()));
     assert!(external_link.join("SKILL.md").is_file());
     files::remove_link(&external_link).unwrap();
     let moved = engine

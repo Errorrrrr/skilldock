@@ -1,6 +1,156 @@
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
+fn verify_current_snapshot(root: &Path, skill: &Skill) -> Result<()> {
+    let tree = root.join("objects").join(&skill.bundle_digest).join("tree");
+    let reason = match files::snapshot_matches(&tree, &skill.bundle_digest) {
+        Ok(true) => return Ok(()),
+        Ok(false) => "内容与入库时不一致".to_string(),
+        Err(error) => error.to_string(),
+    };
+    fail(format!(
+        "「{}」的统一库快照校验失败（{}）：{reason}。未切换分发；请重新预览迁移，检查该来源并重新收录当前文件",
+        skill.name, skill.bundle_digest
+    ))
+}
+
+fn snapshot_issues(state: &Snapshot) -> Vec<Value> {
+    let root = Path::new(&state.storage_root);
+    let mut packages: BTreeMap<&str, Vec<&Skill>> = BTreeMap::new();
+    for skill in state.skills.iter().filter(|s| s.external_path.is_none()) {
+        packages
+            .entry(&skill.bundle_digest)
+            .or_default()
+            .push(skill);
+    }
+    let mut issues = vec![];
+    for (digest, members) in packages {
+        let tree = root.join("objects").join(digest).join("tree");
+        let mut reason = match files::snapshot_matches(&tree, digest) {
+            Ok(true) => continue,
+            Ok(false) => "当前文件与收录时的快照不一致".to_string(),
+            Err(error) => error.to_string(),
+        };
+        let missing: Vec<_> = members
+            .iter()
+            .filter(|s| !tree.join(&s.relative_path).join("SKILL.md").is_file())
+            .map(|s| s.name.as_str())
+            .collect();
+        let content_digest = if !missing.is_empty() {
+            reason = format!(
+                "入口文件缺失：{}；请先恢复来源文件，不能重新收录",
+                missing.join("、")
+            );
+            None
+        } else {
+            match files::content_digest(&tree) {
+                Ok(digest) => Some(digest),
+                Err(error) => {
+                    reason = format!("{reason}；无法重新收录：{error}");
+                    None
+                }
+            }
+        };
+        issues.push(json!({
+            "bundleDigest":digest, "skillId":members[0].id,
+            "skillIds":members.iter().map(|s| &s.id).collect::<Vec<_>>(),
+            "skillNames":members.iter().map(|s| &s.name).collect::<Vec<_>>(),
+            "sourceIds":members.iter().map(|s| &s.source_id).collect::<BTreeSet<_>>(),
+            "path":tree, "reason":reason, "contentDigest":content_digest,
+        }));
+    }
+    issues
+}
+
+// A tool may replace a managed link with real files. Never treat those files as
+// disposable: preview their exact contents, then journal an atomic sibling backup.
+fn directory_repairs(state: &Snapshot) -> Result<Vec<Value>> {
+    let mut repairs = vec![];
+    for binding in &state.bindings {
+        let meta = fs::symlink_metadata(&binding.path).map_err(|error| {
+            error::Error::Message(format!("无法检查分发路径：{}（{error}）", binding.path))
+        })?;
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+        if !meta.is_dir() {
+            return fail(format!(
+                "分发路径被普通文件占用，请先处理：{}",
+                binding.path
+            ));
+        }
+        repairs.push(json!({
+            "bindingId": binding.id,
+            "path": binding.path,
+            "contentDigest": files::manifest_digest(Path::new(&binding.path))?,
+        }));
+    }
+    Ok(repairs)
+}
+
+fn plan_directory_repairs(
+    state: &Snapshot,
+    root: &Path,
+    request: &Value,
+    changes: &mut Vec<Change>,
+) -> Result<()> {
+    let repairs = directory_repairs(state)?;
+    let approved = request["directoryRepairs"].as_array();
+    if approved.is_some_and(|items| items.len() != repairs.len()) {
+        return fail("分发目录状态已变化，请重新预览；未替换任何目录");
+    }
+    let mut verified = BTreeSet::new();
+    for repair in repairs {
+        let binding = state
+            .bindings
+            .iter()
+            .find(|b| repair["bindingId"] == b.id)
+            .unwrap();
+        if !approved.is_some_and(|items| items.contains(&repair)) {
+            return fail(format!(
+                "分发位置是实体文件夹或内容已变化，请重新预览并确认备份后修复：{}",
+                binding.path
+            ));
+        }
+        let skill = state
+            .skills
+            .iter()
+            .find(|s| s.id == binding.skill_id)
+            .ok_or_else(|| error::Error::Message("分发记录引用不存在的 Skill".into()))?;
+        if state
+            .packages
+            .iter()
+            .any(|p| p.member_ids.contains(&skill.id) && !p.issues.is_empty())
+        {
+            return fail(format!("「{}」依赖尚未就绪，未替换原目录", skill.name));
+        }
+        let desired = skill_path(root, skill);
+        let path = PathBuf::from(&binding.path);
+        if fs::canonicalize(&desired)?.starts_with(fs::canonicalize(&path)?) {
+            return fail(format!(
+                "所选内容位于待备份目录内，请先复制入库：{}",
+                binding.path
+            ));
+        }
+        if skill.external_path.is_none() && verified.insert(skill.bundle_digest.clone()) {
+            verify_current_snapshot(root, skill)?;
+        }
+        let backup = path
+            .parent()
+            .unwrap()
+            .join(format!(".skilldock-backup-{}", id()));
+        changes.push(Change {
+            path,
+            before: None,
+            after: Some(desired),
+            backup: Some(backup),
+            backup_digest: repair["contentDigest"].as_str().map(str::to_owned),
+            restore: false,
+        });
+    }
+    Ok(())
+}
+
 fn same_content(a: &Skill, b: &Skill) -> bool {
     match (&a.external_path, &b.external_path) {
         (Some(a), Some(b)) => fs::canonicalize(a)
@@ -248,7 +398,25 @@ pub(crate) fn finalize(
         .content_backups
         .retain(|b| after.skills.iter().any(|s| s.source_id == b.source_id));
     let mut verified = BTreeSet::new();
+    // Migration must validate every selected current member, including ones
+    // with no bindings or with an unchanged binding. Preview is advisory only.
+    if kind == "enable_single_content" {
+        for skill in &after.skills {
+            if skill.external_path.is_none() && verified.insert(skill.bundle_digest.clone()) {
+                verify_current_snapshot(root, skill)?;
+            }
+        }
+    }
     for binding in &mut after.bindings {
+        if changes
+            .iter()
+            .any(|c| c.path == Path::new(&binding.path) && c.backup.is_some())
+        {
+            // The displaced directory is now the recovery source; an older
+            // borrowed-link target no longer describes what was at this path.
+            binding.borrowed = false;
+            binding.original_link = None;
+        }
         let skill = after
             .skills
             .iter()
@@ -270,14 +438,8 @@ pub(crate) fn finalize(
                     skill.name
                 ));
             }
-            if skill.external_path.is_none()
-                && verified.insert(skill.bundle_digest.clone())
-                && !files::snapshot_matches(
-                    &root.join("objects").join(&skill.bundle_digest).join("tree"),
-                    &skill.bundle_digest,
-                )?
-            {
-                return fail("待使用内容校验失败，未切换分发");
+            if skill.external_path.is_none() && verified.insert(skill.bundle_digest.clone()) {
+                verify_current_snapshot(root, skill)?;
             }
             if let Some(change) = changes
                 .iter_mut()
@@ -289,7 +451,12 @@ pub(crate) fn finalize(
                 }
                 change.after = Some(desired.clone());
             } else {
-                let actual = fs::read_link(&binding.path)?;
+                let actual = fs::read_link(&binding.path).map_err(|error| {
+                    error::Error::Message(format!(
+                        "分发位置不是可读取的软链接，未覆盖：{}（{error}）；请重新预览迁移或诊断分发状态",
+                        binding.path
+                    ))
+                })?;
                 let resolved = if actual.is_absolute() {
                     actual.clone()
                 } else {
@@ -332,6 +499,8 @@ pub(crate) fn finalize(
 impl Engine {
     pub(crate) fn preview_single_content(&self) -> Result<Value> {
         let state = self.snapshot()?;
+        let repairs = directory_repairs(&state)?;
+        let issues = snapshot_issues(&state);
         let mut groups: BTreeMap<String, Vec<Skill>> = BTreeMap::new();
         for skill in &state.skills {
             groups
@@ -348,7 +517,8 @@ impl Engine {
             .collect();
         Ok(
             json!({ "revision":state.revision,"alreadyEnabled":state.schema_version >= 3,"groups":groups,
-            "bindings":state.bindings,"presets":state.presets,"backupCount":state.content_backups.len() }),
+            "bindings":state.bindings,"presets":state.presets,"backupCount":state.content_backups.len(),
+            "directoryRepairs":repairs,"snapshotIssues":issues }),
         )
     }
 
@@ -356,7 +526,7 @@ impl Engine {
         let state = self.transact(
             "enable_single_content",
             "切换为单一当前内容",
-            |state, _, _| {
+            |state, root, changes| {
                 if request["expectedRevision"].as_u64() != Some(state.revision as u64) {
                     return fail("资料库已变化，请重新预览");
                 }
@@ -409,6 +579,7 @@ impl Engine {
                     }
                 }
                 merge_records(state, &mapping);
+                plan_directory_repairs(state, root, request, changes)?;
                 state.schema_version = 3;
                 Ok(())
             },
@@ -584,6 +755,53 @@ pub(crate) fn library_directory(root: &Path) -> PathBuf {
     }
 }
 
+fn legacy_aliases(state: &Snapshot, root: &Path) -> Result<BTreeSet<(String, PathBuf)>> {
+    let current_ids: BTreeSet<_> = state.skills.iter().map(|s| &s.id).collect();
+    let mut versions = state.skills.clone();
+    for binding in &state.bindings {
+        if let Some(skill) = state.skills.iter().find(|s| s.id == binding.skill_id) {
+            let mut old = skill.clone();
+            old.bundle_digest = binding.digest.clone();
+            old.relative_path = binding.relative_path.clone();
+            old.version = binding.version.clone();
+            old.external_path = binding.external_path.clone();
+            versions.push(old);
+        }
+    }
+    // Refreshing a snapshot keeps its old public aliases. Journals establish
+    // their identity even after all tool bindings have moved to newer content.
+    for entry in fs::read_dir(root.join("transactions"))? {
+        let path = entry?.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let journal: Journal = serde_json::from_slice(&fs::read(path)?)?;
+        if !matches!(
+            journal.status.as_str(),
+            "committed" | "expired" | "restored"
+        ) {
+            continue;
+        }
+        for snapshot in [&journal.before, &journal.after] {
+            versions.extend(
+                snapshot
+                    .skills
+                    .iter()
+                    .filter(|s| current_ids.contains(&s.id))
+                    .cloned(),
+            );
+        }
+    }
+    let mut aliases = BTreeSet::new();
+    for skill in versions {
+        let target = skill_path(root, &skill);
+        let version: String = skill.version.chars().take(8).collect();
+        aliases.insert((skill.name.clone(), target.clone()));
+        aliases.insert((format!("{}@{version}", skill.name), target));
+    }
+    Ok(aliases)
+}
+
 pub(crate) fn plan_entries(
     before: &Snapshot,
     after: &mut Snapshot,
@@ -606,17 +824,14 @@ pub(crate) fn plan_entries(
     }
     // Adopt only exact generated legacy aliases during the explicit migration.
     if before.schema_version < 3 {
+        let aliases = legacy_aliases(before, root)?;
         for entry in fs::read_dir(&directory)? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().to_string();
             let Ok(target) = fs::read_link(entry.path()) else {
                 continue;
             };
-            let owned = before.skills.iter().any(|skill| {
-                let version: String = skill.version.chars().take(8).collect();
-                (name == skill.name || name == format!("{}@{version}", skill.name))
-                    && target == skill_path(root, skill)
-            });
+            let owned = aliases.contains(&(name.clone(), target.clone()));
             if owned {
                 let next = after
                     .skills

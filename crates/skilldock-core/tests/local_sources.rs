@@ -454,3 +454,79 @@ async fn shared_resources_changed_after_preview_require_a_new_confirmation() {
         "shared-original"
     );
 }
+
+#[tokio::test]
+async fn stale_local_members_do_not_block_revocation_or_removal() {
+    let temp = tempfile::tempdir().unwrap();
+    let base = fs::canonicalize(temp.path()).unwrap();
+    let library = base.join("library");
+    let source = base.join("source");
+    let alpha = source.join("alpha");
+    let first_target = base.join("first-target");
+    let second_target = base.join("second-target");
+    for directory in [&alpha, &first_target, &second_target] {
+        fs::create_dir_all(directory).unwrap();
+    }
+    fs::write(alpha.join("SKILL.md"), "---\nname: alpha\n---\ncontent").unwrap();
+
+    let engine = Engine::new(Some(base.join("config"))).unwrap();
+    engine.configure(library.to_str().unwrap()).unwrap();
+    let mut state = run(
+        &engine,
+        json!({"action":"add_target","path":first_target,"name":"first"}),
+    )
+    .await;
+    let first_id = state["targets"][0]["id"].clone();
+    state = run(
+        &engine,
+        json!({"action":"add_target","path":second_target,"name":"second"}),
+    )
+    .await;
+    let second_id = state["targets"][1]["id"].clone();
+    let saved = run(
+        &engine,
+        json!({"action":"save_local_source","path":source,"name":"Local","selectedPaths":[alpha],"revision":state["revision"]}),
+    )
+    .await;
+    let source_id = saved["sourceId"].clone();
+    state = run(
+        &engine,
+        json!({"action":"apply_local_source","sourceId":source_id,"targetIds":[first_id,second_id],"expectedRevision":saved["snapshot"]["revision"]}),
+    )
+    .await;
+    assert!(first_target.join("alpha").is_symlink());
+    assert!(second_target.join("alpha").is_symlink());
+
+    // Simulate an older or inconsistent source member list while bindings still exist.
+    let state_path = base.join("library/.skilldock/state.json");
+    let mut persisted: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    persisted["sources"][0]["localMemberIds"] = json!(["missing-member"]);
+    fs::write(&state_path, serde_json::to_vec(&persisted).unwrap()).unwrap();
+
+    let apply_error = engine
+        .execute(json!({"action":"apply_local_source","sourceId":source_id,"targetIds":[first_id],"expectedRevision":state["revision"]}))
+        .await
+        .unwrap_err();
+    assert!(
+        apply_error
+            .to_string()
+            .contains("本地来源成员已变化，请重新扫描")
+    );
+
+    state = run(
+        &engine,
+        json!({"action":"revoke_local_source","sourceId":source_id,"targetIds":[first_id],"expectedRevision":state["revision"]}),
+    )
+    .await;
+    assert!(!first_target.join("alpha").exists());
+    assert!(second_target.join("alpha").is_symlink());
+
+    state = run(
+        &engine,
+        json!({"action":"remove_local_source","sourceId":source_id,"targetIds":[],"expectedRevision":state["revision"]}),
+    )
+    .await;
+    assert!(!second_target.join("alpha").exists());
+    assert_eq!(state["sources"][0]["updatesRemoved"], true);
+    assert!(alpha.join("SKILL.md").is_file());
+}

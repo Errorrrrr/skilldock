@@ -39,6 +39,42 @@ fn external_reference_roots(state: &Snapshot) -> Vec<&String> {
         .collect()
 }
 
+// Match directory entries, not final targets: two links to the same object can
+// have different owners. Only exact symlink hops through migrating bindings are safe.
+fn entry_identity(path: &Path) -> std::io::Result<PathBuf> {
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => Ok(fs::canonicalize(parent)?.join(name)),
+        _ => fs::canonicalize(path),
+    }
+}
+
+fn follows_migrating_binding(path: &Path, entries: &BTreeSet<PathBuf>) -> Result<bool> {
+    if entries.is_empty() {
+        return Ok(false);
+    }
+    let mut current = path.to_path_buf();
+    let mut seen = BTreeSet::new();
+    for _ in 0..64 {
+        let identity = entry_identity(&current)?;
+        if !seen.insert(identity.clone()) {
+            return fail(format!("软链循环，无法迁移：{}", path.display()));
+        }
+        if entries.contains(&identity) {
+            return Ok(true);
+        }
+        if !fs::symlink_metadata(&identity)?.file_type().is_symlink() {
+            return Ok(false);
+        }
+        let target = fs::read_link(&identity)?;
+        current = if target.is_absolute() {
+            target
+        } else {
+            identity.parent().unwrap().join(target)
+        };
+    }
+    fail(format!("软链层数过多，无法迁移：{}", path.display()))
+}
+
 impl Engine {
     pub(crate) fn check_external_migration(
         &self,
@@ -89,6 +125,15 @@ impl Engine {
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .filter(|name| name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit()))
             .collect();
+        let mut moving = BTreeSet::new();
+        for binding in state.bindings.iter().filter(|b| b.external_path.is_none()) {
+            let path = Path::new(&binding.path);
+            if path.is_symlink()
+                && fs::canonicalize(path)? == fs::canonicalize(binding_path(root, binding))?
+            {
+                moving.insert(entry_identity(path)?);
+            }
+        }
         let mut used = BTreeMap::new();
         Self::filesystem_cleanup_references(
             root,
@@ -98,11 +143,18 @@ impl Engine {
             None,
             &mut used,
             100_000,
+            &moving,
         )?;
         if !used.is_empty() {
-            return fail(
-                "本地引用或已移除目标的保留链接仍指向当前统一库，请先调整这些依赖再迁移，避免旧库移除后失效",
-            );
+            return fail(format!(
+                "仍有未随迁移调整的外部链接指向旧库，未移动或移除旧库：{}。请将这些链接改为引用已管理的分发位置，或重新添加对应目标后再迁移",
+                used.values()
+                    .cloned()
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>()
+                    .join("；")
+            ));
         }
         Ok(())
     }
@@ -298,6 +350,7 @@ impl Engine {
     // Read-only reachability check. Follow directory aliases with canonical
     // deduplication, but never traverse the library itself as a reference root.
     // A bounded/incomplete scan must not produce a "ready" candidate.
+    #[allow(clippy::too_many_arguments)]
     fn filesystem_cleanup_references(
         root: &Path,
         state: &Snapshot,
@@ -306,13 +359,8 @@ impl Engine {
         staging_task: Option<&str>,
         used: &mut BTreeMap<String, String>,
         max_entries: usize,
+        migrating_entries: &BTreeSet<PathBuf>,
     ) -> Result<()> {
-        fn entry_identity(path: &Path) -> std::io::Result<PathBuf> {
-            match (path.parent(), path.file_name()) {
-                (Some(parent), Some(name)) => Ok(fs::canonicalize(parent)?.join(name)),
-                _ => fs::canonicalize(path),
-            }
-        }
         let restored = changes
             .iter()
             .filter(|c| c.restore)
@@ -377,7 +425,9 @@ impl Engine {
             };
             // Only these exact directory entries disappear during this restore.
             // Other aliases to the same object must remain protected.
-            if restored.contains(&entry_identity(&path)?) {
+            if restored.contains(&entry_identity(&path)?)
+                || follows_migrating_binding(&path, migrating_entries)?
+            {
                 continue;
             }
             // The entry existed above. Even NotFound now means a dangling link
@@ -473,6 +523,7 @@ impl Engine {
                 None,
                 &mut used,
                 50_000,
+                &BTreeSet::new(),
             )
             .err()
             .map(|e| e.to_string())
@@ -910,6 +961,7 @@ impl Engine {
                     Some(&journal.id),
                     &mut used,
                     50_000,
+                    &BTreeSet::new(),
                 )?;
                 if let Some(reason) = used.get(&work.choice.digest) {
                     work.status = "retained".into();
@@ -1171,6 +1223,7 @@ mod tests {
             None,
             &mut BTreeMap::new(),
             0,
+            &BTreeSet::new(),
         )
         .unwrap_err();
         assert!(error.to_string().contains("扫描上限"));

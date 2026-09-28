@@ -143,6 +143,21 @@ export interface GitPackageResult {
   presetId: string
 }
 
+export interface SingleContentDirectoryRepair {
+  bindingId: string
+  path: string
+  contentDigest: string
+}
+export interface SingleContentSnapshotIssue {
+  bundleDigest: string
+  skillId: string
+  skillIds: string[]
+  skillNames: string[]
+  sourceIds: string[]
+  path: string
+  reason: string
+  contentDigest: string | null
+}
 export interface SingleContentPreview {
   revision: number
   alreadyEnabled: boolean
@@ -150,6 +165,8 @@ export interface SingleContentPreview {
   bindings: Snapshot['bindings']
   presets: Snapshot['presets']
   backupCount: number
+  directoryRepairs: SingleContentDirectoryRepair[]
+  snapshotIssues: SingleContentSnapshotIssue[]
 }
 export interface SingleContentChoice {
   name: string
@@ -171,9 +188,10 @@ export const api = {
   enableSingleContent: (
     expectedRevision: number,
     choices: SingleContentChoice[],
+    directoryRepairs: SingleContentDirectoryRepair[] = [],
   ): Promise<Snapshot> =>
     isNative
-      ? native('enable_single_content', { expectedRevision, choices })
+      ? native('enable_single_content', { expectedRevision, choices, directoryRepairs })
       : demo.demoEnableSingleContent(expectedRevision, choices),
   arrangeLibrary: (): Promise<Snapshot> =>
     isNative ? native('arrange_library') : demo.demoArrangeLibrary(),
