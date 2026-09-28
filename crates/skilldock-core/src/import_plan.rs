@@ -16,10 +16,29 @@ impl Engine {
             return fail("请选择保留整包结构或独立 Skill");
         }
         let mut roots = Vec::new();
+        let mut skipped_roots = Vec::new();
         for path in strings(request, "paths")? {
             let path = files::absolute(&path)?;
-            if fs::symlink_metadata(&path)?.file_type().is_symlink() || files::protected(&path) {
-                return fail("请选择原始实体目录，不能扫描软链根或工具内部目录");
+            if fs::symlink_metadata(&path)?.file_type().is_symlink() {
+                let target = fs::read_link(&path)?;
+                let target = if target.is_absolute() {
+                    target
+                } else {
+                    path.parent().unwrap().join(target)
+                };
+                skipped_roots.push(format!(
+                    "已跳过软链目录：{}（指向 {}）。如需归集，请选择该链接指向的原始实体目录。",
+                    path.display(),
+                    target.display()
+                ));
+                continue;
+            }
+            if files::protected(&path) {
+                skipped_roots.push(format!(
+                    "已跳过工具内部目录：{}，请另选原始实体目录。",
+                    path.display()
+                ));
+                continue;
             }
             let path = fs::canonicalize(path)?;
             let library = Path::new(&state.storage_root);
@@ -31,7 +50,11 @@ impl Engine {
         roots.sort_by_key(|path| (path.len(), path.clone()));
         roots.dedup();
         if roots.is_empty() {
-            return fail("请选择扫描目录");
+            return fail(if skipped_roots.is_empty() {
+                "请选择扫描目录".to_string()
+            } else {
+                format!("没有可扫描的实体目录。{}", skipped_roots.join("\n"))
+            });
         }
         let scan = files::scan_many(&roots)?;
         let ready: Vec<_> = scan.items.iter().filter(|i| i.status == "ready").collect();
@@ -135,7 +158,8 @@ impl Engine {
                 "roots": roots, "mode": mode, "adopt": flag(request, "adopt"), "items": items,
             }))?)
         );
-        let mut warnings = scan.warnings;
+        let mut warnings = skipped_roots;
+        warnings.extend(scan.warnings);
         if mode == "individual" {
             warnings.push("独立 Skill 模式只保存各成员目录；仅在确认成员不依赖扫描根的共享文件或兄弟目录时使用。含共享资源的工作流请选择保留整包结构。".into());
         }

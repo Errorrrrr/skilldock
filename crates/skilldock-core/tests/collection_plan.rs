@@ -283,3 +283,84 @@ async fn new_collection_requires_explicit_legacy_library_migration() {
         .unwrap_err();
     assert!(error.to_string().contains("单份当前内容"));
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn alias_root_does_not_block_real_skills_or_change_the_alias() {
+    let f = Fixture::new();
+    let real = f.base.join("config/skills");
+    let alias = f.base.join("antigravity/skills");
+    let member = real.join("alpha");
+    skill(&member, "alpha", "original");
+    fs::create_dir_all(alias.parent().unwrap()).unwrap();
+    let link = PathBuf::from("../config/skills");
+    std::os::unix::fs::symlink(&link, &alias).unwrap();
+    let before = fs::read_link(&alias).unwrap();
+    let plan = f
+        .preview(vec![alias.clone(), real.clone()], "individual", true)
+        .await;
+    assert_eq!(plan["paths"], json!([real]));
+    assert_eq!(plan["items"].as_array().unwrap().len(), 1);
+    assert!(plan["warnings"].as_array().unwrap().iter().any(|w| {
+        let text = w.as_str().unwrap();
+        text.contains("已跳过软链目录") && text.contains(alias.to_str().unwrap())
+    }));
+    let state = f.run(collect(&plan, vec![member], true, json!({}))).await;
+    assert_eq!(state["skills"].as_array().unwrap().len(), 1);
+    assert_eq!(fs::read_link(&alias).unwrap(), before);
+    assert!(alias.join("alpha/SKILL.md").is_file());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn alias_only_selection_reports_the_exact_path_without_traversing() {
+    let f = Fixture::new();
+    let real = f.base.join("real/skills");
+    let alias = f.base.join("alias-skills");
+    skill(&real.join("alpha"), "alpha", "original");
+    std::os::unix::fs::symlink(&real, &alias).unwrap();
+    let error = f
+        .engine
+        .execute(json!({"action":"preview_collection","paths":[alias]}))
+        .await
+        .unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("没有可扫描的实体目录"));
+    assert!(message.contains(alias.to_str().unwrap()));
+    assert!(message.contains(real.to_str().unwrap()));
+    assert!(f.engine.snapshot().unwrap().skills.is_empty());
+    assert!(!real.join("alpha").is_symlink());
+}
+
+#[tokio::test]
+async fn protected_roots_are_reported_and_excluded_from_collection() {
+    let f = Fixture::new();
+    let real = f.base.join("skills");
+    let protected = f.base.join("plugins/tool/skills");
+    skill(&real.join("alpha"), "alpha", "original");
+    skill(&protected.join("hidden"), "hidden", "protected");
+    let plan = f
+        .preview(vec![protected.clone(), real.clone()], "individual", false)
+        .await;
+    assert_eq!(plan["paths"], json!([real]));
+    assert_eq!(plan["items"].as_array().unwrap().len(), 1);
+    assert!(
+        plan["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w.as_str().unwrap().contains(protected.to_str().unwrap()))
+    );
+    let error = f
+        .engine
+        .execute(collect(
+            &plan,
+            vec![protected.join("hidden")],
+            false,
+            json!({}),
+        ))
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("不可归集"));
+    assert!(f.engine.snapshot().unwrap().skills.is_empty());
+}
