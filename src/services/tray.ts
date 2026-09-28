@@ -15,7 +15,8 @@ export interface TrayStatus {
 }
 let demoPaused = false
 export async function trayAction(
-  action: 'ready' | 'status' | 'open' | 'check' | 'configure' | 'pause' | 'quit' | 'hide',
+  action:
+    'ready' | 'status' | 'open' | 'check' | 'configure' | 'pause' | 'quit' | 'hide' | 'background',
 ): Promise<TrayStatus> {
   if (isNative) return invoke('tray_action', { action })
   if (action === 'pause') demoPaused = !demoPaused

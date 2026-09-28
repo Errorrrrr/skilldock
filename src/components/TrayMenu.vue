@@ -87,9 +87,9 @@ async function refresh() {
     error.value = true
   }
 }
-async function run(action: 'open' | 'check' | 'configure' | 'quit' | 'hide') {
+async function run(action: 'open' | 'check' | 'configure' | 'quit' | 'hide' | 'background') {
   if (action === 'check' && (!ready.value || status.value.active)) return
-  if (busy.value && action !== 'hide' && action !== 'open' && action !== 'configure') return
+  if (busy.value && !['hide', 'open', 'configure', 'background'].includes(action)) return
 
   message.value = ''
   error.value = false
@@ -119,7 +119,7 @@ function onKey(event: KeyboardEvent) {
     void run('check')
   } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'q') {
     event.preventDefault()
-    void run('quit')
+    void run('background')
   }
 }
 let disposed = false
@@ -284,7 +284,6 @@ onUnmounted(() => {
               <Power :size="15" />
             </div>
             <span class="tray-action-label">完全退出</span>
-            <kbd class="tray-shortcut">{{ cmdKey }}Q</kbd>
           </Button>
         </RovingFocusItem>
       </RovingFocusGroup>

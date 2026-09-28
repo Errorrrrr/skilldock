@@ -72,6 +72,14 @@ async fn tray_action(
             })
             .map_err(|e| e.to_string())?;
         }
+        "background" => {
+            if !state.tray_available {
+                return Err("托盘不可用，请保留主窗口或选择完全退出".into());
+            }
+            let handle = app.clone();
+            app.run_on_main_thread(move || hide_to_tray(&handle))
+                .map_err(|e| e.to_string())?;
+        }
         "open" | "configure" => {
             let handle = app.clone();
             let configure = action == "configure";
@@ -136,6 +144,20 @@ async fn tray_action(
         "automatic":snapshot.sources.iter().filter(|s| s.supports_remote_updates() && s.policy.mode == "auto").count(),
         "theme":snapshot.settings.theme}))
 }
+fn hide_to_tray(app: &tauri::AppHandle) {
+    tray_popup::hide(app);
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+    tracing::info!("window_hidden_to_tray");
+}
+
+// System Quit (including macOS Cmd+Q) has no code. Explicit full quit and
+// updater restart supply one, and must retain their existing exit semantics.
+fn system_quit_to_tray(code: Option<i32>, tray_available: bool, restarting: bool) -> bool {
+    code.is_none() && tray_available && !restarting
+}
+
 fn show(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
@@ -277,8 +299,7 @@ fn main() {
                         .unwrap_or(true)
                 {
                     api.prevent_close();
-                    tracing::info!("window_hidden_to_tray");
-                    let _ = window.hide();
+                    hide_to_tray(app);
                 } else {
                     // The hidden tray webview must not keep the app alive after a normal close.
                     api.prevent_close();
@@ -306,8 +327,17 @@ fn main() {
             if let tauri::RunEvent::Reopen { .. } = event {
                 show(app);
             }
-            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
                 let rt = app.state::<Runtime>();
+                if system_quit_to_tray(
+                    code,
+                    rt.tray_available,
+                    rt.restarting.load(Ordering::SeqCst),
+                ) {
+                    api.prevent_exit();
+                    hide_to_tray(app);
+                    return;
+                }
                 if !rt.restarting.load(Ordering::SeqCst)
                     && (rt.active.load(Ordering::SeqCst) || rt.engine.update_guard().is_err())
                 {
@@ -316,4 +346,22 @@ fn main() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod exit_tests {
+    use super::system_quit_to_tray;
+
+    #[test]
+    fn system_quit_stays_background_only_with_a_recoverable_tray() {
+        assert!(system_quit_to_tray(None, true, false));
+        assert!(!system_quit_to_tray(None, false, false));
+    }
+
+    #[test]
+    fn explicit_full_quit_and_update_restart_are_not_hidden() {
+        assert!(!system_quit_to_tray(Some(0), true, false));
+        assert!(!system_quit_to_tray(Some(0), true, true));
+        assert!(!system_quit_to_tray(None, true, true));
+    }
 }

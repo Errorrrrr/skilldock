@@ -464,7 +464,8 @@ const themeOptions = [
             />
           </div>
           <div class="callout warning">
-            关闭窗口后可从状态栏或托盘重新打开。菜单中的“完全退出”会结束后台检查。
+            关闭窗口后可从状态栏或托盘重新打开。⌘Q
+            或系统菜单“退出”也会留在托盘继续运行；托盘菜单中的“完全退出”会结束后台检查。
           </div></template
         >
       </fieldset>
