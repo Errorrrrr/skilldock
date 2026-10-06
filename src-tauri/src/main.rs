@@ -26,6 +26,17 @@ struct Runtime {
     restarting: AtomicBool,
 }
 
+impl Runtime {
+    fn keep_running_in_tray(&self) -> bool {
+        self.tray_available
+            && self
+                .engine
+                .snapshot()
+                .map(|s| s.settings.close_to_tray)
+                .unwrap_or(true)
+    }
+}
+
 #[tauri::command]
 async fn execute(
     request: Value,
@@ -201,7 +212,17 @@ fn main() {
                 tray = tray.icon(icon.clone());
             }
             // Linux tray click events are unavailable in Tauri; keep the main window recoverable.
-            let tray_available = !cfg!(target_os = "linux") && tray.build(app).is_ok();
+            let tray_available = if cfg!(target_os = "linux") {
+                false
+            } else {
+                match tray.build(app) {
+                    Ok(_) => true,
+                    Err(error) => {
+                        tracing::warn!(%error, "tray_creation_failed");
+                        false
+                    }
+                }
+            };
             tracing::info!(tray_available, "desktop_ready");
             app.manage(Runtime {
                 engine: engine.clone(),
@@ -269,13 +290,7 @@ fn main() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let app = window.app_handle();
                 let rt = app.state::<Runtime>();
-                if rt.tray_available
-                    && rt
-                        .engine
-                        .snapshot()
-                        .map(|s| s.settings.close_to_tray)
-                        .unwrap_or(true)
-                {
+                if rt.keep_running_in_tray() {
                     api.prevent_close();
                     tracing::info!("window_hidden_to_tray");
                     let _ = window.hide();
@@ -306,11 +321,21 @@ fn main() {
             if let tauri::RunEvent::Reopen { .. } = event {
                 show(app);
             }
-            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+            if let tauri::RunEvent::ExitRequested { code, api, .. } = event {
                 let rt = app.state::<Runtime>();
-                if !rt.restarting.load(Ordering::SeqCst)
-                    && (rt.active.load(Ordering::SeqCst) || rt.engine.update_guard().is_err())
-                {
+                if rt.restarting.load(Ordering::SeqCst) {
+                    return;
+                }
+                // Native quit actions (e.g. Cmd+Q) bypass CloseRequested. Keep the
+                // same background behavior; app.exit(0) from "完全退出" stays explicit.
+                if code.is_none() && rt.keep_running_in_tray() {
+                    api.prevent_exit();
+                    tray_popup::hide(app);
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.hide();
+                    }
+                    tracing::info!("exit_hidden_to_tray");
+                } else if rt.active.load(Ordering::SeqCst) || rt.engine.update_guard().is_err() {
                     api.prevent_exit();
                     show(app);
                 }
