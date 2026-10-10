@@ -2,6 +2,8 @@
 mod app_updates;
 mod directories;
 #[cfg(target_os = "macos")]
+mod macos_lifecycle;
+#[cfg(target_os = "macos")]
 mod tray_outside;
 mod tray_popup;
 mod tray_position;
@@ -148,10 +150,31 @@ async fn tray_action(
         "theme":snapshot.settings.theme}))
 }
 fn show(app: &tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    if let Err(error) = app.set_activation_policy(tauri::ActivationPolicy::Regular) {
+        tracing::warn!(%error, "dock_restore_failed");
+    }
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
+    }
+}
+
+fn hide_to_tray(app: &tauri::AppHandle) {
+    tray_popup::hide(app);
+    if let Some(window) = app.get_webview_window("main") {
+        if let Err(error) = window.hide() {
+            tracing::warn!(%error, "window_hide_failed");
+            return;
+        }
+        // Hiding a window alone leaves a running application in the macOS Dock.
+        // Keep the status item alive while removing only the Dock entry.
+        #[cfg(target_os = "macos")]
+        if let Err(error) = app.set_activation_policy(tauri::ActivationPolicy::Accessory) {
+            tracing::warn!(%error, "dock_hide_failed");
+        }
+        tracing::info!("window_hidden_to_tray");
     }
 }
 fn main() {
@@ -169,6 +192,8 @@ fn main() {
                 .build(),
         )
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            macos_lifecycle::install(app.handle())?;
             let test_config = if cfg!(debug_assertions) {
                 std::env::var_os("SKILLDOCK_TEST_CONFIG").map(std::path::PathBuf::from)
             } else {
@@ -194,7 +219,7 @@ fn main() {
             if let Err(error) = tray_outside::install(app.handle()) {
                 tracing::warn!(%error, "tray_outside_monitor_failed");
             }
-            let mut tray = TrayIconBuilder::new()
+            let mut tray = TrayIconBuilder::with_id("skilldock")
                 .tooltip("SkillDock · Skill 管理")
                 .show_menu_on_left_click(false)
                 .on_tray_icon_event(|tray, event| {
@@ -292,8 +317,7 @@ fn main() {
                 let rt = app.state::<Runtime>();
                 if rt.keep_running_in_tray() {
                     api.prevent_close();
-                    tracing::info!("window_hidden_to_tray");
-                    let _ = window.hide();
+                    hide_to_tray(app);
                 } else {
                     // The hidden tray webview must not keep the app alive after a normal close.
                     api.prevent_close();
@@ -326,14 +350,11 @@ fn main() {
                 if rt.restarting.load(Ordering::SeqCst) {
                     return;
                 }
-                // Native quit actions (e.g. Cmd+Q) bypass CloseRequested. Keep the
-                // same background behavior; app.exit(0) from "完全退出" stays explicit.
+                // macOS Cmd+Q is routed through CloseRequested by our custom menu.
+                // Keep other implicit exits in the background as well.
                 if code.is_none() && rt.keep_running_in_tray() {
                     api.prevent_exit();
-                    tray_popup::hide(app);
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.hide();
-                    }
+                    hide_to_tray(app);
                     tracing::info!("exit_hidden_to_tray");
                 } else if rt.active.load(Ordering::SeqCst) || rt.engine.update_guard().is_err() {
                     api.prevent_exit();
