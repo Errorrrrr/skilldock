@@ -275,7 +275,6 @@ function applyFromCard(preset: Preset) {
         "
       />
     </section>
-    <PresetEditorDialog v-model:open="editorOpen" :preset="editing" />
     <AppSheet
       v-model:open="detailOpen"
       :title="currentPreset?.name || '预设详情'"
@@ -377,6 +376,7 @@ function applyFromCard(preset: Preset) {
         </div></template
       ></AppSheet
     >
+    <PresetEditorDialog v-model:open="editorOpen" :preset="editing" />
     <AppDialog
       v-model:open="applyOpen"
       title="整体分发预设"
