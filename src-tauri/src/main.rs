@@ -2,6 +2,8 @@
 mod app_updates;
 mod directories;
 #[cfg(target_os = "macos")]
+mod macos_lifecycle;
+#[cfg(target_os = "macos")]
 mod tray_outside;
 mod tray_popup;
 mod tray_position;
@@ -24,6 +26,17 @@ struct Runtime {
     active: Arc<AtomicBool>,
     app_updates: app_updates::AppUpdates,
     restarting: AtomicBool,
+}
+
+impl Runtime {
+    fn keep_running_in_tray(&self) -> bool {
+        self.tray_available
+            && self
+                .engine
+                .snapshot()
+                .map(|s| s.settings.close_to_tray)
+                .unwrap_or(true)
+    }
 }
 
 #[tauri::command]
@@ -144,25 +157,38 @@ async fn tray_action(
         "automatic":snapshot.sources.iter().filter(|s| s.supports_remote_updates() && s.policy.mode == "auto").count(),
         "theme":snapshot.settings.theme}))
 }
-fn hide_to_tray(app: &tauri::AppHandle) {
-    tray_popup::hide(app);
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
-    }
-    tracing::info!("window_hidden_to_tray");
-}
-
-// System Quit (including macOS Cmd+Q) has no code. Explicit full quit and
-// updater restart supply one, and must retain their existing exit semantics.
-fn system_quit_to_tray(code: Option<i32>, tray_available: bool, restarting: bool) -> bool {
-    code.is_none() && tray_available && !restarting
+// Implicit exits may stay in the tray. Explicit full quit and updater restart
+// must retain their existing exit semantics.
+fn system_quit_to_tray(code: Option<i32>, keep_running_in_tray: bool, restarting: bool) -> bool {
+    code.is_none() && keep_running_in_tray && !restarting
 }
 
 fn show(app: &tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    if let Err(error) = app.set_activation_policy(tauri::ActivationPolicy::Regular) {
+        tracing::warn!(%error, "dock_restore_failed");
+    }
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
+    }
+}
+
+fn hide_to_tray(app: &tauri::AppHandle) {
+    tray_popup::hide(app);
+    if let Some(window) = app.get_webview_window("main") {
+        if let Err(error) = window.hide() {
+            tracing::warn!(%error, "window_hide_failed");
+            return;
+        }
+        // Hiding a window alone leaves a running application in the macOS Dock.
+        // Keep the status item alive while removing only the Dock entry.
+        #[cfg(target_os = "macos")]
+        if let Err(error) = app.set_activation_policy(tauri::ActivationPolicy::Accessory) {
+            tracing::warn!(%error, "dock_hide_failed");
+        }
+        tracing::info!("window_hidden_to_tray");
     }
 }
 fn main() {
@@ -180,6 +206,8 @@ fn main() {
                 .build(),
         )
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            macos_lifecycle::install(app.handle())?;
             let test_config = if cfg!(debug_assertions) {
                 std::env::var_os("SKILLDOCK_TEST_CONFIG").map(std::path::PathBuf::from)
             } else {
@@ -205,7 +233,7 @@ fn main() {
             if let Err(error) = tray_outside::install(app.handle()) {
                 tracing::warn!(%error, "tray_outside_monitor_failed");
             }
-            let mut tray = TrayIconBuilder::new()
+            let mut tray = TrayIconBuilder::with_id("skilldock")
                 .tooltip("SkillDock · Skill 管理")
                 .show_menu_on_left_click(false)
                 .on_tray_icon_event(|tray, event| {
@@ -223,7 +251,17 @@ fn main() {
                 tray = tray.icon(icon.clone());
             }
             // Linux tray click events are unavailable in Tauri; keep the main window recoverable.
-            let tray_available = !cfg!(target_os = "linux") && tray.build(app).is_ok();
+            let tray_available = if cfg!(target_os = "linux") {
+                false
+            } else {
+                match tray.build(app) {
+                    Ok(_) => true,
+                    Err(error) => {
+                        tracing::warn!(%error, "tray_creation_failed");
+                        false
+                    }
+                }
+            };
             tracing::info!(tray_available, "desktop_ready");
             app.manage(Runtime {
                 engine: engine.clone(),
@@ -291,13 +329,7 @@ fn main() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let app = window.app_handle();
                 let rt = app.state::<Runtime>();
-                if rt.tray_available
-                    && rt
-                        .engine
-                        .snapshot()
-                        .map(|s| s.settings.close_to_tray)
-                        .unwrap_or(true)
-                {
+                if rt.keep_running_in_tray() {
                     api.prevent_close();
                     hide_to_tray(app);
                 } else {
@@ -331,11 +363,12 @@ fn main() {
                 let rt = app.state::<Runtime>();
                 if system_quit_to_tray(
                     code,
-                    rt.tray_available,
+                    rt.keep_running_in_tray(),
                     rt.restarting.load(Ordering::SeqCst),
                 ) {
                     api.prevent_exit();
                     hide_to_tray(app);
+                    tracing::info!("exit_hidden_to_tray");
                     return;
                 }
                 if !rt.restarting.load(Ordering::SeqCst)

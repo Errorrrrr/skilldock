@@ -427,7 +427,10 @@ const themeOptions = [
           <div class="settings-row">
             <div>
               <h4>关闭窗口后继续运行</h4>
-              <p>保留托盘入口和定时检查；完全退出会停止调度。</p>
+              <p>
+                关闭窗口后保留托盘入口和定时检查；macOS
+                隐藏程序坞图标，重新打开窗口时恢复。托盘中的“完全退出”会停止调度。
+              </p>
             </div>
             <button
               class="switch"
