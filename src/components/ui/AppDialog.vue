@@ -14,6 +14,7 @@ withDefaults(
     title: string
     description?: string
     large?: boolean
+    wide?: boolean
     fixedLayout?: boolean
   }>(),
   { description: '', large: false },
@@ -27,7 +28,7 @@ const emit = defineEmits<{ 'update:open': [value: boolean] }>()
       <DialogOverlay class="dialog-overlay" />
       <DialogContent
         class="dialog-content"
-        :class="{ 'dialog-lg': large, 'dialog-fixed-layout': fixedLayout }"
+        :class="{ 'dialog-lg': large, 'dialog-wide': wide, 'dialog-fixed-layout': fixedLayout }"
       >
         <header class="dialog-header">
           <DialogTitle class="dialog-title">{{ title }}</DialogTitle>
@@ -45,6 +46,9 @@ const emit = defineEmits<{ 'update:open': [value: boolean] }>()
 </template>
 
 <style scoped>
+.dialog-wide {
+  width: min(1200px, calc(100vw - 32px));
+}
 .dialog-fixed-layout {
   display: flex;
   flex-direction: column;
@@ -67,6 +71,10 @@ const emit = defineEmits<{ 'update:open': [value: boolean] }>()
   flex-shrink: 0;
 }
 .dialog-fixed-layout .dialog-body > :deep(.git-package-import) {
+  flex: 1;
+  min-height: 0;
+}
+.dialog-fixed-layout .dialog-body > :deep(.preset-editor-workspace) {
   flex: 1;
   min-height: 0;
 }

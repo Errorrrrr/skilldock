@@ -5,7 +5,7 @@ import { useAppStore } from '@/stores/app'
 import Button from './ui/Button.vue'
 import Badge from './ui/Badge.vue'
 import AppSelect from './ui/AppSelect.vue'
-const props = defineProps<{ draft?: boolean }>()
+const props = defineProps<{ draft?: boolean; compact?: boolean }>()
 const emit = defineEmits<{
   imported: [result: GitPackageResult, autoAdd: boolean, removedIds: string[]]
 }>()
@@ -13,6 +13,7 @@ const app = useAppStore()
 const url = ref('')
 const reference = ref('')
 const subdir = ref('')
+const advancedOpen = ref(false)
 const preview = ref<GitPackagePreview | null>(null)
 const selected = ref<string[]>([])
 const removed = ref<string[]>([])
@@ -103,7 +104,16 @@ async function install() {
     <p v-if="!preview" class="subtle">
       支持 GitHub、GitLab 及自建 Git 服务，可导入单个 Skill、部分成员或整个集合。
     </p>
-    <div class="form-grid">
+    <Button
+      v-if="compact"
+      size="sm"
+      variant="ghost"
+      class="git-advanced-toggle"
+      :aria-expanded="advancedOpen"
+      @click="advancedOpen = !advancedOpen"
+      >{{ advancedOpen ? '收起' : '设置' }}分支与子目录（可选）</Button
+    >
+    <div v-show="!compact || advancedOpen" class="form-grid">
       <label class="field"
         ><span class="field-label">分支 / 标签（可选）</span
         ><input
@@ -264,6 +274,9 @@ async function install() {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.git-advanced-toggle {
+  align-self: flex-start;
 }
 .git-source-input .input {
   flex: 1;

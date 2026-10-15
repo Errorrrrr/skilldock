@@ -28,7 +28,7 @@ const app = useAppStore()
 const name = ref('')
 const description = ref('')
 const skillIds = ref<string[]>([])
-const selectedExpanded = ref(false)
+const selectedExpanded = ref(true)
 const selectedMembers = computed(() => {
   const members = new Map(app.snapshot?.skills.map((skill) => [skill.id, skill]))
   return skillIds.value.map((id) => ({ id, name: members.get(id)?.name || id }))
@@ -175,7 +175,7 @@ watch(
     removedSelection.value = []
     query.value = ''
     mode.value = 'library'
-    selectedExpanded.value = false
+    selectedExpanded.value = true
     preview.value = null
     scanSelected.value = []
     subscriptions.value = structuredClone(
@@ -366,8 +366,8 @@ async function save() {
     :open="open"
     fixed-layout
     :title="preset ? '编辑预设' : '新建预设'"
-    description="保存成员组合，单一内容模式下所有受管目标使用当前内容。"
     large
+    wide
     @update:open="emit('update:open', $event)"
     ><div class="form-grid" style="margin-bottom: 8px">
       <label class="field"
@@ -378,366 +378,376 @@ async function save() {
         ><input v-model="description" class="input" placeholder="说明适用场景"
       /></label>
     </div>
-    <div class="segmented" style="margin-bottom: 8px">
-      <button class="segment" :class="{ active: mode === 'library' }" @click="mode = 'library'">
-        <Plus style="width: 13px; display: inline" /> 从库选择</button
-      ><button class="segment" :class="{ active: mode === 'folder' }" @click="mode = 'folder'">
-        <FolderSearch style="width: 13px; display: inline" /> 从文件夹</button
-      ><button class="segment" :class="{ active: mode === 'git' }" @click="mode = 'git'">
-        从 Git 集合</button
-      ><button class="segment" :class="{ active: mode === 'web' }" @click="mode = 'web'">
-        <Globe2 style="width: 13px; display: inline" /> 从网站
-      </button>
-    </div>
-    <section v-if="mode === 'library'">
-      <div class="search-field" style="margin-bottom: 10px">
-        <Search /><input v-model="query" placeholder="筛选 Skill" />
-      </div>
-      <div class="choice-list" style="max-height: 280px; overflow: auto">
-        <div v-for="skill in filtered" :key="skill.id" class="choice">
-          <div class="choice-main">
-            <label class="skill-choice-label"
-              ><input v-model="skillIds" class="checkbox" type="checkbox" :value="skill.id" />
-              <div class="choice-main">
-                <div class="choice-title">{{ skill.name }}</div>
-                <div class="choice-meta">{{ skill.description }}</div>
-              </div></label
-            ><SkillDirectoryActions :skill="skill" />
-          </div>
-          <Badge>{{ skill.externalPath ? '跟随本地内容' : `v${skill.version}` }}</Badge>
+    <div class="preset-editor-workspace">
+      <div class="preset-source-panel">
+        <div class="segmented" style="margin-bottom: 8px">
+          <button class="segment" :class="{ active: mode === 'library' }" @click="mode = 'library'">
+            <Plus style="width: 13px; display: inline" /> 从库选择</button
+          ><button class="segment" :class="{ active: mode === 'folder' }" @click="mode = 'folder'">
+            <FolderSearch style="width: 13px; display: inline" /> 从文件夹</button
+          ><button class="segment" :class="{ active: mode === 'git' }" @click="mode = 'git'">
+            从 Git 集合</button
+          ><button class="segment" :class="{ active: mode === 'web' }" @click="mode = 'web'">
+            <Globe2 style="width: 13px; display: inline" /> 从网站
+          </button>
         </div>
-      </div>
-    </section>
-    <section v-else-if="mode === 'folder'" class="folder-scan-panel">
-      <p class="choice-meta" style="margin: 0 0 8px">本地包仅手动同步到统一库，原目录保留。</p>
-      <label class="field"
-        ><span class="field-label">包含 Skill 的文件夹</span>
-        <div class="folder-scan-input">
-          <DirectoryField v-model="folder" :disabled="busy" />
-          <Button :disabled="busy" @click="scanFolder"><FolderSearch />扫描文件夹</Button>
-        </div></label
-      >
-
-      <div class="folder-scan-results">
-        <div v-if="scanned.length" class="choice-list" style="margin-top: 12px">
-          <div v-for="item in scanned" :key="item.path" class="choice">
-            <div class="choice-main">
-              <label class="skill-choice-label"
-                ><input
-                  v-model="scanSelected"
-                  class="checkbox"
-                  type="checkbox"
-                  :value="item.path"
-                  :disabled="busy || !!item.error"
-                />
-                <div class="choice-main">
-                  <div class="choice-title">
-                    {{ item.name }}
-                    <Badge v-if="item.change && item.change !== 'unchanged'">{{
-                      item.change === 'added' ? '新增' : '内容变更'
-                    }}</Badge>
-                  </div>
-                  <div class="choice-meta mono">{{ item.path }}</div>
-                  <div v-if="item.error" class="field-error">{{ item.error }}</div>
-                  <div v-if="item.existingId" class="choice-meta">
-                    同一实体已登记，将检查来源关系
-                  </div>
-                  <div v-if="item.snapshotId" class="choice-meta">
-                    同一来源已入库；本次同步内容变化并复用已有成员
-                  </div>
-                  <div v-if="item.sameName" class="field-error">
-                    已有同名的其他来源，不自动合并；分发时需处理同名冲突
-                  </div>
-                  <div v-if="item.existingLinks?.length" class="existing-tools-row">
-                    <span class="existing-tools-label">使用位置：</span>
-                    <div class="existing-tools-tags">
-                      <span
-                        v-for="tool in getTools(item.existingLinks)"
-                        :key="tool.name"
-                        class="tool-tag"
-                        :title="`在 ${tool.name} 中使用：\n${tool.paths.join('\n')}`"
-                      >
-                        {{ tool.name }}
-                      </span>
-                    </div>
-                  </div>
-                </div></label
-              ><SkillDirectoryActions :path="item.path" />
+        <section v-if="mode === 'library'" class="preset-library-panel">
+          <div class="search-field" style="margin-bottom: 10px">
+            <Search /><input v-model="query" placeholder="筛选 Skill" />
+          </div>
+          <div class="choice-list preset-library-list">
+            <div v-for="skill in filtered" :key="skill.id" class="choice">
+              <div class="choice-main">
+                <label class="skill-choice-label"
+                  ><input v-model="skillIds" class="checkbox" type="checkbox" :value="skill.id" />
+                  <div class="choice-main">
+                    <div class="choice-title">{{ skill.name }}</div>
+                    <div class="choice-meta">{{ skill.description }}</div>
+                  </div></label
+                ><SkillDirectoryActions :skill="skill" />
+              </div>
+              <Badge>{{ skill.externalPath ? '跟随本地内容' : `v${skill.version}` }}</Badge>
             </div>
           </div>
-        </div>
-        <div v-if="removedItems.length" class="callout" style="margin-top: 12px">
-          <strong>来源已移除 {{ removedItems.length }} 项</strong>
-          <label v-for="item in removedItems" :key="item.skillId" class="choice">
-            <input
-              v-model="removedSelection"
-              type="checkbox"
-              class="checkbox"
-              :value="item.skillId"
-              :disabled="busy"
-            />
-            <span
-              >从本预设移除 {{ item.name
-              }}<span class="choice-meta mono"> · {{ item.path }}</span></span
+        </section>
+        <section v-else-if="mode === 'folder'" class="folder-scan-panel">
+          <p class="choice-meta" style="margin: 0 0 8px">本地包仅手动同步到统一库，原目录保留。</p>
+          <label class="field"
+            ><span class="field-label">包含 Skill 的文件夹</span>
+            <div class="folder-scan-input">
+              <DirectoryField v-model="folder" :disabled="busy" />
+              <Button :disabled="busy" @click="scanFolder"><FolderSearch />扫描文件夹</Button>
+            </div></label
+          >
+
+          <div class="folder-scan-results">
+            <div v-if="scanned.length" class="choice-list" style="margin-top: 12px">
+              <div v-for="item in scanned" :key="item.path" class="choice">
+                <div class="choice-main">
+                  <label class="skill-choice-label"
+                    ><input
+                      v-model="scanSelected"
+                      class="checkbox"
+                      type="checkbox"
+                      :value="item.path"
+                      :disabled="busy || !!item.error"
+                    />
+                    <div class="choice-main">
+                      <div class="choice-title">
+                        {{ item.name }}
+                        <Badge v-if="item.change && item.change !== 'unchanged'">{{
+                          item.change === 'added' ? '新增' : '内容变更'
+                        }}</Badge>
+                      </div>
+                      <div class="choice-meta mono">{{ item.path }}</div>
+                      <div v-if="item.error" class="field-error">{{ item.error }}</div>
+                      <div v-if="item.existingId" class="choice-meta">
+                        同一实体已登记，将检查来源关系
+                      </div>
+                      <div v-if="item.snapshotId" class="choice-meta">
+                        同一来源已入库；本次同步内容变化并复用已有成员
+                      </div>
+                      <div v-if="item.sameName" class="field-error">
+                        已有同名的其他来源，不自动合并；分发时需处理同名冲突
+                      </div>
+                      <div v-if="item.existingLinks?.length" class="existing-tools-row">
+                        <span class="existing-tools-label">使用位置：</span>
+                        <div class="existing-tools-tags">
+                          <span
+                            v-for="tool in getTools(item.existingLinks)"
+                            :key="tool.name"
+                            class="tool-tag"
+                            :title="`在 ${tool.name} 中使用：\n${tool.paths.join('\n')}`"
+                          >
+                            {{ tool.name }}
+                          </span>
+                        </div>
+                      </div>
+                    </div></label
+                  ><SkillDirectoryActions :path="item.path" />
+                </div>
+              </div>
+            </div>
+            <div v-if="removedItems.length" class="callout" style="margin-top: 12px">
+              <strong>来源已移除 {{ removedItems.length }} 项</strong>
+              <label v-for="item in removedItems" :key="item.skillId" class="choice">
+                <input
+                  v-model="removedSelection"
+                  type="checkbox"
+                  class="checkbox"
+                  :value="item.skillId"
+                  :disabled="busy"
+                />
+                <span
+                  >从本预设移除 {{ item.name
+                  }}<span class="choice-meta mono"> · {{ item.path }}</span></span
+                >
+              </label>
+            </div>
+          </div>
+        </section>
+        <GitPackageImport v-else-if="mode === 'git'" draft compact @imported="addGitPackage" />
+        <section v-else class="empty" style="min-height: 200px">
+          <div>
+            <div class="empty-icon"><Globe2 /></div>
+            <h3>先安装，再加入预设</h3>
+            <p>网站结果需要先完成内容确认并安装到中央库。请先保存当前预设，再前往安装。</p>
+            <RouterLink class="btn btn-primary" to="/discover" @click="emit('update:open', false)"
+              >前往发现与安装</RouterLink
             >
-          </label>
-        </div>
+          </div>
+        </section>
       </div>
-    </section>
-    <GitPackageImport v-else-if="mode === 'git'" draft @imported="addGitPackage" />
-    <section v-else class="empty" style="min-height: 200px">
-      <div>
-        <div class="empty-icon"><Globe2 /></div>
-        <h3>先安装，再加入预设</h3>
-        <p>网站结果需要先完成内容确认并安装到中央库。请先保存当前预设，再前往安装。</p>
-        <RouterLink class="btn btn-primary" to="/discover" @click="emit('update:open', false)"
-          >前往发现与安装</RouterLink
-        >
-      </div>
-    </section>
-    <div class="git-selection-summary">
-      <section v-if="selectedPackages.length" class="list-stack" style="margin-top: 16px">
-        <div v-for="entry in selectedPackages" :key="entry.subscription.packageId" class="choice">
-          <div class="choice-main">
+      <div class="git-selection-summary">
+        <section v-if="selectedPackages.length" class="list-stack">
+          <div v-for="entry in selectedPackages" :key="entry.subscription.packageId" class="choice">
+            <div class="choice-main">
+              <Button
+                size="sm"
+                variant="ghost"
+                :aria-expanded="expandedPackages.includes(entry.subscription.packageId)"
+                @click="togglePackage(entry.subscription.packageId)"
+                ><ChevronDown />{{ entry.package?.name }} ·
+                {{ entry.subscription.selectedIds.length }} /
+                {{ entry.members.length }} 个成员</Button
+              >
+              <div class="choice-meta mono">{{ entry.package?.path }}</div>
+              <div
+                v-if="expandedPackages.includes(entry.subscription.packageId)"
+                class="package-member-list"
+              >
+                <label v-for="member in entry.members" :key="member.id" class="choice"
+                  ><input
+                    :checked="entry.subscription.selectedIds.includes(member.id)"
+                    class="checkbox"
+                    type="checkbox"
+                    @change="
+                      selectPackageMember(
+                        entry.subscription.packageId,
+                        member.id,
+                        ($event.target as HTMLInputElement).checked,
+                      )
+                    "
+                  />{{ member.name
+                  }}<Badge v-if="entry.package?.missingMemberIds?.includes(member.id)" tone="amber"
+                    >来源已移除 · 保留旧内容</Badge
+                  ></label
+                >
+              </div>
+              <p v-for="issue in entry.package?.issues" :key="issue" class="field-error">
+                {{ issue }}
+              </p>
+              <label
+                ><input v-model="entry.subscription.autoAdd" type="checkbox" class="checkbox" />
+                同步后加入新增成员</label
+              >
+            </div>
+            <Button size="sm" variant="ghost" @click="removePackage(entry.subscription.packageId)"
+              >移除包</Button
+            >
+          </div>
+        </section>
+        <div v-if="mode === 'folder'" class="migration-section">
+          <div class="migration-header-row">
             <Button
               size="sm"
               variant="ghost"
-              :aria-expanded="expandedPackages.includes(entry.subscription.packageId)"
-              @click="togglePackage(entry.subscription.packageId)"
-              ><ChevronDown />{{ entry.package?.name }} ·
-              {{ entry.subscription.selectedIds.length }} /
-              {{ entry.members.length }} 个成员</Button
+              :disabled="busy || migrationLoading || !folder.trim()"
+              @click="migrationPreview"
             >
-            <div class="choice-meta mono">{{ entry.package?.path }}</div>
-            <div
-              v-if="expandedPackages.includes(entry.subscription.packageId)"
-              class="package-member-list"
-            >
-              <label v-for="member in entry.members" :key="member.id" class="choice"
-                ><input
-                  :checked="entry.subscription.selectedIds.includes(member.id)"
-                  class="checkbox"
-                  type="checkbox"
-                  @change="
-                    selectPackageMember(
-                      entry.subscription.packageId,
-                      member.id,
-                      ($event.target as HTMLInputElement).checked,
-                    )
-                  "
-                />{{ member.name
-                }}<Badge v-if="entry.package?.missingMemberIds?.includes(member.id)" tone="amber"
-                  >来源已移除 · 保留旧内容</Badge
-                ></label
-              >
-            </div>
-            <p v-for="issue in entry.package?.issues" :key="issue" class="field-error">
-              {{ issue }}
-            </p>
-            <label
-              ><input v-model="entry.subscription.autoAdd" type="checkbox" class="checkbox" />
-              同步后加入新增成员</label
+              <History style="width: 14px; height: 14px; margin-right: 4px" />
+              {{ migrationLoading ? '正在检查旧归集迁移…' : '检查旧归集迁移' }}
+            </Button>
+            <span class="choice-meta" style="font-size: 12px"
+              >检查目录内是否含有待恢复的旧本地软链或归集入口</span
             >
           </div>
-          <Button size="sm" variant="ghost" @click="removePackage(entry.subscription.packageId)"
-            >移除包</Button
-          >
-        </div>
-      </section>
-      <div v-if="mode === 'folder'" class="migration-section">
-        <div class="migration-header-row">
-          <Button
-            size="sm"
-            variant="ghost"
-            :disabled="busy || migrationLoading || !folder.trim()"
-            @click="migrationPreview"
-          >
-            <History style="width: 14px; height: 14px; margin-right: 4px" />
-            {{ migrationLoading ? '正在检查旧归集迁移…' : '检查旧归集迁移' }}
-          </Button>
-          <span class="choice-meta" style="font-size: 12px"
-            >检查目录内是否含有待恢复的旧本地软链或归集入口</span
-          >
-        </div>
 
-        <div v-if="migrationChecked" class="migration-panel">
-          <div class="migration-panel-header" @click="migrationCollapsed = !migrationCollapsed">
-            <div class="migration-panel-title">
-              <ChevronDown class="collapse-icon" :class="{ collapsed: migrationCollapsed }" />
-              <span>旧归集迁移预检</span>
-              <span class="migration-count">共 {{ migration.length }} 项</span>
-            </div>
-            <div class="migration-panel-badges">
-              <Badge v-if="migrationNeedsRestoreCount > 0" tone="amber">
-                {{ migrationNeedsRestoreCount }} 项需恢复来源
-              </Badge>
-              <Badge v-else-if="migration.length > 0" tone="green"> 全部就绪 </Badge>
-            </div>
-          </div>
-
-          <div v-show="!migrationCollapsed" class="migration-panel-body">
-            <div v-if="!migration.length" class="migration-empty subtle">
-              <CheckCircle2
-                style="
-                  width: 15px;
-                  height: 15px;
-                  color: var(--green, #10b981);
-                  display: inline-block;
-                  vertical-align: -2px;
-                  margin-right: 4px;
-                "
-              />
-              未检测到旧归集软链条目，当前目录下 Skill 实体均可直接作为预设包导入。
-            </div>
-            <template v-else>
-              <div class="migration-cards-grid">
-                <div
-                  class="migration-stat-card card-amber"
-                  :class="{ active: activeMigrationTab === 'needsSourceRestore' }"
-                  role="button"
-                  tabindex="0"
-                  @click="activeMigrationTab = 'needsSourceRestore'"
-                  @keydown.enter.space="activeMigrationTab = 'needsSourceRestore'"
-                >
-                  <div class="stat-card-top">
-                    <div class="stat-card-label">
-                      <AlertTriangle class="stat-card-icon text-amber" />
-                      <span>需恢复来源</span>
-                    </div>
-                    <span class="stat-card-count text-amber">{{
-                      migrationRestoreItems.length
-                    }}</span>
-                  </div>
-                  <div class="stat-card-desc">含历史软链或归集入口，需恢复独立来源</div>
-                </div>
-
-                <div
-                  class="migration-stat-card card-green"
-                  :class="{ active: activeMigrationTab === 'ready' }"
-                  role="button"
-                  tabindex="0"
-                  @click="activeMigrationTab = 'ready'"
-                  @keydown.enter.space="activeMigrationTab = 'ready'"
-                >
-                  <div class="stat-card-top">
-                    <div class="stat-card-label">
-                      <CheckCircle2 class="stat-card-icon text-green" />
-                      <span>可直接登记</span>
-                    </div>
-                    <span class="stat-card-count text-green">{{ migrationReadyItems.length }}</span>
-                  </div>
-                  <div class="stat-card-desc">纯净完整本地实体，可直接作为预设包导入</div>
-                </div>
+          <div v-if="migrationChecked" class="migration-panel">
+            <div class="migration-panel-header" @click="migrationCollapsed = !migrationCollapsed">
+              <div class="migration-panel-title">
+                <ChevronDown class="collapse-icon" :class="{ collapsed: migrationCollapsed }" />
+                <span>旧归集迁移预检</span>
+                <span class="migration-count">共 {{ migration.length }} 项</span>
               </div>
+              <div class="migration-panel-badges">
+                <Badge v-if="migrationNeedsRestoreCount > 0" tone="amber">
+                  {{ migrationNeedsRestoreCount }} 项需恢复来源
+                </Badge>
+                <Badge v-else-if="migration.length > 0" tone="green"> 全部就绪 </Badge>
+              </div>
+            </div>
 
-              <div class="migration-tab-content">
-                <div class="migration-tab-header">
-                  <span class="migration-tab-title">
-                    {{
-                      activeMigrationTab === 'needsSourceRestore'
-                        ? '需恢复来源条目'
-                        : '可直接登记条目'
-                    }}
-                    （{{
-                      (activeMigrationTab === 'needsSourceRestore'
-                        ? migrationRestoreItems
-                        : migrationReadyItems
-                      ).length
-                    }}）
-                  </span>
-                </div>
-
-                <div
-                  v-if="
-                    !(
-                      activeMigrationTab === 'needsSourceRestore'
-                        ? migrationRestoreItems
-                        : migrationReadyItems
-                    ).length
+            <div v-show="!migrationCollapsed" class="migration-panel-body">
+              <div v-if="!migration.length" class="migration-empty subtle">
+                <CheckCircle2
+                  style="
+                    width: 15px;
+                    height: 15px;
+                    color: var(--green, #10b981);
+                    display: inline-block;
+                    vertical-align: -2px;
+                    margin-right: 4px;
                   "
-                  class="migration-empty subtle"
-                >
-                  <template v-if="activeMigrationTab === 'needsSourceRestore'">
-                    <CheckCircle2
-                      style="
-                        width: 15px;
-                        height: 15px;
-                        color: var(--green, #10b981);
-                        display: inline-block;
-                        vertical-align: -2px;
-                        margin-right: 4px;
-                      "
-                    />
-                    太棒了！未发现需要恢复来源的条目，所有实体均可正常登记。
-                  </template>
-                  <template v-else> 暂无可直接登记的条目。 </template>
-                </div>
-
-                <div v-else class="migration-items-list">
+                />
+                未检测到旧归集软链条目，当前目录下 Skill 实体均可直接作为预设包导入。
+              </div>
+              <template v-else>
+                <div class="migration-cards-grid">
                   <div
-                    v-for="item in activeMigrationTab === 'needsSourceRestore'
-                      ? migrationRestoreItems
-                      : migrationReadyItems"
-                    :key="item.path"
-                    class="migration-item-card"
-                    :class="{ 'needs-restore': item.status === 'needsSourceRestore' }"
+                    class="migration-stat-card card-amber"
+                    :class="{ active: activeMigrationTab === 'needsSourceRestore' }"
+                    role="button"
+                    tabindex="0"
+                    @click="activeMigrationTab = 'needsSourceRestore'"
+                    @keydown.enter.space="activeMigrationTab = 'needsSourceRestore'"
                   >
-                    <div class="migration-item-header">
-                      <span class="migration-item-path mono" :title="item.path">{{
-                        item.path
+                    <div class="stat-card-top">
+                      <div class="stat-card-label">
+                        <AlertTriangle class="stat-card-icon text-amber" />
+                        <span>需恢复来源</span>
+                      </div>
+                      <span class="stat-card-count text-amber">{{
+                        migrationRestoreItems.length
                       }}</span>
-                      <Badge :tone="item.status === 'needsSourceRestore' ? 'amber' : 'green'">
-                        {{ item.status === 'needsSourceRestore' ? '需恢复来源' : '可直接登记' }}
-                      </Badge>
                     </div>
+                    <div class="stat-card-desc">含历史软链或归集入口，需恢复独立来源</div>
+                  </div>
+
+                  <div
+                    class="migration-stat-card card-green"
+                    :class="{ active: activeMigrationTab === 'ready' }"
+                    role="button"
+                    tabindex="0"
+                    @click="activeMigrationTab = 'ready'"
+                    @keydown.enter.space="activeMigrationTab = 'ready'"
+                  >
+                    <div class="stat-card-top">
+                      <div class="stat-card-label">
+                        <CheckCircle2 class="stat-card-icon text-green" />
+                        <span>可直接登记</span>
+                      </div>
+                      <span class="stat-card-count text-green">{{
+                        migrationReadyItems.length
+                      }}</span>
+                    </div>
+                    <div class="stat-card-desc">纯净完整本地实体，可直接作为预设包导入</div>
+                  </div>
+                </div>
+
+                <div class="migration-tab-content">
+                  <div class="migration-tab-header">
+                    <span class="migration-tab-title">
+                      {{
+                        activeMigrationTab === 'needsSourceRestore'
+                          ? '需恢复来源条目'
+                          : '可直接登记条目'
+                      }}
+                      （{{
+                        (activeMigrationTab === 'needsSourceRestore'
+                          ? migrationRestoreItems
+                          : migrationReadyItems
+                        ).length
+                      }}）
+                    </span>
+                  </div>
+
+                  <div
+                    v-if="
+                      !(
+                        activeMigrationTab === 'needsSourceRestore'
+                          ? migrationRestoreItems
+                          : migrationReadyItems
+                      ).length
+                    "
+                    class="migration-empty subtle"
+                  >
+                    <template v-if="activeMigrationTab === 'needsSourceRestore'">
+                      <CheckCircle2
+                        style="
+                          width: 15px;
+                          height: 15px;
+                          color: var(--green, #10b981);
+                          display: inline-block;
+                          vertical-align: -2px;
+                          margin-right: 4px;
+                        "
+                      />
+                      太棒了！未发现需要恢复来源的条目，所有实体均可正常登记。
+                    </template>
+                    <template v-else> 暂无可直接登记的条目。 </template>
+                  </div>
+
+                  <div v-else class="migration-items-list">
                     <div
-                      v-if="item.entity && item.entity !== item.path"
-                      class="migration-item-entity mono"
+                      v-for="item in activeMigrationTab === 'needsSourceRestore'
+                        ? migrationRestoreItems
+                        : migrationReadyItems"
+                      :key="item.path"
+                      class="migration-item-card"
+                      :class="{ 'needs-restore': item.status === 'needsSourceRestore' }"
                     >
-                      指向实体：{{ item.entity }}
-                    </div>
-                    <div class="migration-item-reason choice-meta">
-                      {{ item.reason }}
+                      <div class="migration-item-header">
+                        <span class="migration-item-path mono" :title="item.path">{{
+                          item.path
+                        }}</span>
+                        <Badge :tone="item.status === 'needsSourceRestore' ? 'amber' : 'green'">
+                          {{ item.status === 'needsSourceRestore' ? '需恢复来源' : '可直接登记' }}
+                        </Badge>
+                      </div>
+                      <div
+                        v-if="item.entity && item.entity !== item.path"
+                        class="migration-item-entity mono"
+                      >
+                        指向实体：{{ item.entity }}
+                      </div>
+                      <div class="migration-item-reason choice-meta">
+                        {{ item.reason }}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            </template>
+              </template>
+            </div>
           </div>
         </div>
+        <section v-if="skillIds.length" class="selected-members" aria-label="已选择成员">
+          <div class="selected-members-header">
+            <button
+              type="button"
+              class="selected-members-toggle"
+              :aria-expanded="selectedExpanded"
+              aria-controls="preset-selected-members"
+              @click="selectedExpanded = !selectedExpanded"
+            >
+              <span>已选择成员</span
+              ><span class="selected-members-count">{{ skillIds.length }}</span>
+              <ChevronDown :class="{ expanded: selectedExpanded }" />
+            </button>
+            <Button size="sm" variant="ghost" :disabled="busy" @click="clearSelection"
+              >清空选择</Button
+            >
+          </div>
+          <div v-show="selectedExpanded" id="preset-selected-members" class="selected-members-list">
+            <div v-for="member in selectedMembers" :key="member.id" class="selected-member-row">
+              <span class="selected-member-name" :title="member.name">{{ member.name }}</span>
+              <SkillDirectoryActions :skill-id="member.id" />
+              <Button
+                size="icon"
+                variant="ghost"
+                :disabled="busy"
+                :aria-label="`移除 ${member.name}`"
+                title="从本次预设选择中移除"
+                @click="removeMember(member.id)"
+                ><X
+              /></Button>
+            </div>
+          </div>
+        </section>
+        <p v-if="!skillIds.length && !selectedPackages.length" class="subtle">
+          从左侧选择 Skill，已选成员会显示在这里。
+        </p>
       </div>
-      <section v-if="skillIds.length" class="selected-members" aria-label="已选择成员">
-        <div class="selected-members-header">
-          <button
-            type="button"
-            class="selected-members-toggle"
-            :aria-expanded="selectedExpanded"
-            aria-controls="preset-selected-members"
-            @click="selectedExpanded = !selectedExpanded"
-          >
-            <span>已选择成员</span><span class="selected-members-count">{{ skillIds.length }}</span>
-            <ChevronDown :class="{ expanded: selectedExpanded }" />
-          </button>
-          <Button size="sm" variant="ghost" :disabled="busy" @click="clearSelection"
-            >清空选择</Button
-          >
-        </div>
-        <div v-show="selectedExpanded" id="preset-selected-members" class="selected-members-list">
-          <div v-for="member in selectedMembers" :key="member.id" class="selected-member-row">
-            <span class="selected-member-name" :title="member.name">{{ member.name }}</span>
-            <SkillDirectoryActions :skill-id="member.id" />
-            <Button
-              size="icon"
-              variant="ghost"
-              :disabled="busy"
-              :aria-label="`移除 ${member.name}`"
-              title="从本次预设选择中移除"
-              @click="removeMember(member.id)"
-              ><X
-            /></Button>
-          </div>
-        </div>
-      </section>
     </div>
     <template
       #notice
@@ -789,9 +799,67 @@ async function save() {
 </template>
 
 <style scoped>
+.preset-editor-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);
+  gap: 24px;
+  min-height: 0;
+}
+.preset-source-panel,
+.preset-library-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.preset-source-panel > .segmented,
+.preset-library-panel > .search-field {
+  flex-shrink: 0;
+}
+.preset-source-panel > .segmented {
+  flex-wrap: wrap;
+}
+.preset-source-panel > section,
+.preset-source-panel > .git-package-import {
+  flex: 1;
+  min-height: 0;
+}
+.preset-library-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.preset-library-list > .choice {
+  padding: 10px 12px;
+}
+.git-selection-summary {
+  min-width: 0;
+  min-height: 0;
+  padding: 0 16px 0 20px;
+  border-left: 1px solid var(--line);
+}
+.git-selection-summary > .selected-members:first-child {
+  margin-top: 0;
+  border-top: 0;
+}
+@media (max-width: 900px) {
+  .preset-editor-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(360px, 1fr) minmax(180px, 260px);
+    gap: 12px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .git-selection-summary {
+    padding: 8px 16px 0 0;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+}
 .package-member-list {
-  max-height: 220px;
-  overflow: auto;
   margin: 10px 0;
 }
 .selected-members {
@@ -842,13 +910,11 @@ async function save() {
   transform: rotate(180deg);
 }
 .selected-members-list {
-  max-height: 220px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
   padding-bottom: 4px;
 }
 .selected-member-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   padding: 7px 0;
@@ -856,13 +922,14 @@ async function save() {
 }
 .selected-member-name {
   flex: 1;
+  flex-basis: calc(100% - 38px);
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   font-size: 13px;
 }
 .selected-member-row :deep(.skill-directory-actions) {
+  order: 3;
+  width: 100%;
   margin-top: 0;
   flex-shrink: 0;
 }
@@ -1115,9 +1182,9 @@ async function save() {
 
 <style scoped>
 .git-selection-summary {
-  max-height: 150px;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 </style>
 
@@ -1156,10 +1223,5 @@ section.folder-scan-panel {
 }
 .folder-scan-policy {
   font-size: 13px;
-}
-@media (max-height: 760px) {
-  .git-selection-summary {
-    max-height: 68px;
-  }
 }
 </style>
