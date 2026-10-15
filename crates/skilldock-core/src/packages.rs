@@ -454,7 +454,8 @@ impl Engine {
                     source.error = if missing.is_empty() {
                         issues.join("；")
                     } else {
-                        "部分成员已从来源移除，保留旧安装，请在预设中确认处理".into()
+                        "部分成员已从来源移除，库中保留旧版本；不再使用时请解除引用后从库中卸载"
+                            .into()
                     };
                 }
             }

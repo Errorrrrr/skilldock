@@ -293,6 +293,53 @@ fn lookup_skill<'a>(s: &'a Snapshot, id: &str) -> Result<&'a Skill> {
         .find(|x| x.id == id)
         .ok_or_else(|| error::Error::Message("Skill 不存在".into()))
 }
+fn remove_unreferenced_skill(s: &mut Snapshot, sid: &str) -> Result<()> {
+    let skill = lookup_skill(s, sid)?.clone();
+    if s.sources.iter().any(|source| {
+        source
+            .local_member_ids
+            .as_ref()
+            .is_some_and(|ids| ids.iter().any(|id| id == sid))
+    }) {
+        return fail("Skill 仍属于本地来源，请先在来源中调整成员");
+    }
+    if s.packages.iter().any(|package| {
+        package.member_ids.iter().any(|id| id == sid)
+            && !package.missing_member_ids.iter().any(|id| id == sid)
+    }) {
+        return fail("成员仍属于同步包，请在包中处理成员变更");
+    }
+    if s.bindings.iter().any(|b| b.skill_id == sid)
+        || s.presets
+            .iter()
+            .any(|p| p.skill_ids.iter().any(|id| id == sid))
+        || s.preset_packages
+            .iter()
+            .any(|p| p.selected_ids.iter().any(|id| id == sid))
+    {
+        return fail("Skill 仍被目标或预设引用，请先解除引用");
+    }
+    // Retire only missing members. Preserve the exclusion if upstream restores
+    // the same path, so an automatic package update cannot reinstall it.
+    for package in &mut s.packages {
+        if package.member_ids.iter().any(|id| id == sid) {
+            for scope in &mut package.scopes {
+                if scope.source_id == skill.source_id
+                    && !scope.excluded.contains(&skill.relative_path)
+                {
+                    scope.excluded.push(skill.relative_path.clone());
+                }
+            }
+        }
+        package.member_ids.retain(|id| id != sid);
+        package.missing_member_ids.retain(|id| id != sid);
+    }
+    for subscription in &mut s.preset_packages {
+        subscription.excluded_ids.retain(|id| id != sid);
+    }
+    s.skills.retain(|x| x.id != sid);
+    Ok(())
+}
 fn expected(s: &Snapshot, r: &Value) -> Result<()> {
     if r.get("expectedRevision").and_then(Value::as_u64) != Some(s.revision as u64) {
         return fail("数据已变化，请重新预览分发计划");
@@ -1486,24 +1533,7 @@ impl Engine {
                         s.preset_applications.retain(|p| p.preset_id != pid);
                     }
                     "remove_skill" => {
-                        let sid = text(r, "skillId")?;
-                        if s.sources.iter().any(|source| source.local_member_ids.as_ref().is_some_and(|ids| ids.iter().any(|id| id == sid))) {
-                            return fail("Skill 仍属于本地来源，请先在来源中调整成员");
-                        }
-                        if s.packages
-                            .iter()
-                            .any(|p| p.member_ids.iter().any(|id| id == sid))
-                        {
-                            return fail("成员仍属于同步包，请在包中处理成员变更");
-                        }
-                        if s.bindings.iter().any(|b| b.skill_id == sid)
-                            || s.presets
-                                .iter()
-                                .any(|p| p.skill_ids.iter().any(|i| i == sid))
-                        {
-                            return fail("Skill 仍被目标或预设引用，请先解除引用");
-                        }
-                        s.skills.retain(|x| x.id != sid);
+                        remove_unreferenced_skill(s, text(r, "skillId")?)?;
                     }
                     "set_policy" => {
                         let source = s
@@ -1866,7 +1896,7 @@ impl Engine {
                             skill.version = version.chars().take(12).collect();
                             skill.description = item.description.clone();
                         } else {
-                            details.push(format!("{} 已从来源移除，保留旧安装", skill.name));
+                            details.push(format!("{} 已从来源移除，保留库中旧版本", skill.name));
                         }
                     }
                     let additions: Vec<_> = entries
@@ -1989,7 +2019,9 @@ impl Engine {
                         Some(item) if item.name != skill.name && s.schema_version < 3 => {
                             details.push(format!("{} 名称变化，待审阅", skill.name))
                         }
-                        None => details.push(format!("{} 已从来源移除，保留旧安装", skill.name)),
+                        None => {
+                            details.push(format!("{} 已从来源移除，保留库中旧版本", skill.name))
+                        }
                         _ => (),
                     }
                 }
