@@ -1,6 +1,6 @@
 # SkillDock
 
-统一管理 Agent Skill 的跨平台桌面应用与独立 CLI。当前版本 `0.3.11`。项目已在 macOS Apple Silicon 验证原生界面和真实文件操作；Windows/Linux 的安装与真实桌面操作仍需平台验收。
+统一管理 Agent Skill 的跨平台桌面应用与独立 CLI。当前版本 `0.3.12`。项目已在 macOS Apple Silicon 验证原生界面和真实文件操作；Windows/Linux 的安装与真实桌面操作仍需平台验收。
 
 ## 单份当前内容（0.3.0）
 
