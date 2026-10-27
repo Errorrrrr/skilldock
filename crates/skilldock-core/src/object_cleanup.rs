@@ -159,17 +159,6 @@ impl Engine {
         Ok(())
     }
 
-    fn all_journals(&self, root: &Path) -> Result<Vec<Journal>> {
-        let mut journals = vec![];
-        for entry in fs::read_dir(root.join("transactions"))? {
-            let path = entry?.path();
-            if path.extension().and_then(|p| p.to_str()) == Some("json") {
-                journals.push(serde_json::from_slice(&fs::read(path)?)?);
-            }
-        }
-        Ok(journals)
-    }
-
     pub(crate) fn cleanup_references(
         &self,
         root: &Path,
@@ -213,7 +202,7 @@ impl Engine {
             if ignore == Some(journal.id.as_str()) {
                 continue;
             }
-            if Self::cleanup_committed(&journal, state) {
+            if Self::cleanup_committed(&journal.id, &journal.status, state) {
                 if let Some(job) = &journal.object_cleanup {
                     for item in &job.items {
                         if matches!(item.status.as_str(), "pending" | "failed") {
@@ -492,11 +481,15 @@ impl Engine {
             );
         }
         let mut candidates = BTreeSet::new();
-        for skill in before.skills.iter().chain(&after.skills).chain(
-            journals
-                .iter()
-                .flat_map(|j| j.before.skills.iter().chain(&j.after.skills)),
-        ) {
+        for skill in before.skills.iter().chain(&after.skills) {
+            if affected.contains(&skill.id) && skill.external_path.is_none() {
+                candidates.insert(skill.bundle_digest.clone());
+            }
+        }
+        for skill in journals
+            .iter()
+            .flat_map(|j| j.before.skills.iter().chain(&j.after.skills))
+        {
             if affected.contains(&skill.id) && skill.external_path.is_none() {
                 candidates.insert(skill.bundle_digest.clone());
             }
@@ -681,8 +674,8 @@ impl Engine {
     ) -> Result<(RestorePreview, Snapshot)> {
         let mut historical = BTreeSet::new();
         for journal in self.all_journals(root)? {
-            historical.extend(Self::scan_roots(&journal.before, &journal.changes));
-            historical.extend(Self::scan_roots(&journal.after, &journal.changes));
+            historical.extend(journal.before.scan_roots(&journal.changes));
+            historical.extend(journal.after.scan_roots(&journal.changes));
         }
         let scan = Self::with_scan_roots(state, &historical.into_iter().collect::<Vec<_>>());
         let mut candidates = BTreeSet::new();
@@ -717,14 +710,14 @@ impl Engine {
             },
         )
     }
-    fn cleanup_committed(journal: &Journal, state: &Snapshot) -> bool {
-        matches!(journal.status.as_str(), "running" | "committed")
+    fn cleanup_committed(id: &str, status: &str, state: &Snapshot) -> bool {
+        matches!(status, "running" | "committed")
             && state
                 .tasks
                 .iter()
-                .any(|t| t.id == journal.id && t.status == "success")
+                .any(|t| t.id == id && t.status == "success")
     }
-    fn cleanup_report(root: &Path, journal: &Journal) -> CleanupReport {
+    fn cleanup_report(root: &Path, journal: &journal_history::JournalHistory) -> CleanupReport {
         let job = journal.object_cleanup.as_ref().unwrap();
         let pending = job
             .items
@@ -765,13 +758,17 @@ impl Engine {
         Ok(self
             .all_journals(&root)?
             .iter()
-            .filter(|j| j.object_cleanup.is_some() && Self::cleanup_committed(j, &state))
+            .filter(|j| {
+                j.object_cleanup.is_some() && Self::cleanup_committed(&j.id, &j.status, &state)
+            })
             .map(|j| Self::cleanup_report(&root, j))
             .collect())
     }
     pub(crate) fn decorate_object_cleanups(&self, root: &Path, state: &mut Snapshot) -> Result<()> {
         for journal in self.all_journals(root)? {
-            if journal.object_cleanup.is_none() || !Self::cleanup_committed(&journal, state) {
+            if journal.object_cleanup.is_none()
+                || !Self::cleanup_committed(&journal.id, &journal.status, state)
+            {
                 continue;
             }
             let report = Self::cleanup_report(root, &journal);
@@ -935,7 +932,7 @@ impl Engine {
         state: &Snapshot,
         journal: &mut Journal,
     ) -> Result<()> {
-        if !Self::cleanup_committed(journal, state) {
+        if !Self::cleanup_committed(&journal.id, &journal.status, state) {
             return fail("原事务尚未成功提交，不能清理实体");
         }
         let job = journal
@@ -1010,7 +1007,7 @@ impl Engine {
             root.join("transactions").join(format!("{task_id}.json")),
         )?)?;
         if journal.id != task_id
-            || !Self::cleanup_committed(&journal, &state)
+            || !Self::cleanup_committed(&journal.id, &journal.status, &state)
             || journal.object_cleanup.is_none()
         {
             return fail("该任务没有已提交的清理计划");

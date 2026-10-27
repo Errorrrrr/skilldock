@@ -295,6 +295,10 @@ fn lookup_skill<'a>(s: &'a Snapshot, id: &str) -> Result<&'a Skill> {
 }
 fn remove_unreferenced_skill(s: &mut Snapshot, sid: &str) -> Result<()> {
     let skill = lookup_skill(s, sid)?.clone();
+    let updates_removed = s
+        .sources
+        .iter()
+        .any(|source| source.id == skill.source_id && source.updates_removed == Some(true));
     if s.sources.iter().any(|source| {
         source
             .local_member_ids
@@ -306,6 +310,7 @@ fn remove_unreferenced_skill(s: &mut Snapshot, sid: &str) -> Result<()> {
     if s.packages.iter().any(|package| {
         package.member_ids.iter().any(|id| id == sid)
             && !package.missing_member_ids.iter().any(|id| id == sid)
+            && !updates_removed
     }) {
         return fail("成员仍属于同步包，请在包中处理成员变更");
     }
@@ -319,8 +324,8 @@ fn remove_unreferenced_skill(s: &mut Snapshot, sid: &str) -> Result<()> {
     {
         return fail("Skill 仍被目标或预设引用，请先解除引用");
     }
-    // Retire only missing members. Preserve the exclusion if upstream restores
-    // the same path, so an automatic package update cannot reinstall it.
+    // Retire missing members or members whose update management was removed.
+    // Preserve the exclusion so a later package update cannot reinstall them.
     for package in &mut s.packages {
         if package.member_ids.iter().any(|id| id == sid) {
             for scope in &mut package.scopes {

@@ -3,6 +3,7 @@ pub mod error;
 pub mod files;
 mod git_packages;
 mod import_plan;
+mod journal_history;
 mod local_presets;
 mod local_sources;
 pub mod model;
@@ -29,6 +30,7 @@ use std::{
 #[derive(Clone)]
 pub struct Engine {
     pub config_dir: PathBuf,
+    journal_cache: std::sync::Arc<std::sync::Mutex<journal_history::JournalCache>>,
 }
 #[derive(Serialize, Deserialize)]
 struct Config {
@@ -135,6 +137,7 @@ impl Engine {
     pub fn new(config_dir: Option<PathBuf>) -> Result<Self> {
         Ok(Self {
             config_dir: config_dir.unwrap_or(files::default_config()?),
+            journal_cache: Default::default(),
         })
     }
     fn lock(&self) -> Result<fs::File> {
@@ -195,12 +198,8 @@ impl Engine {
         if state.storage_root != root.display().to_string() {
             return fail("数据根指针与库记录不一致，请恢复迁移");
         }
-        if let Ok(entries) = fs::read_dir(root.join("transactions")) {
-            for entry in entries.flatten() {
-                if entry.path().extension().and_then(|s| s.to_str()) != Some("json") {
-                    continue;
-                }
-                let journal: Journal = serde_json::from_slice(&fs::read(entry.path())?)?;
+        {
+            for journal in self.all_journals(&root)? {
                 if matches!(journal.status.as_str(), "running" | "needsRecovery")
                     && !state
                         .tasks
@@ -209,11 +208,11 @@ impl Engine {
                 {
                     state.tasks.retain(|t| t.id != journal.id);
                     state.tasks.push(Task {
-                        id: journal.id,
+                        id: journal.id.clone(),
                         kind: "recovery".into(),
                         title: "有未完成的文件事务".into(),
                         status: "needsRecovery".into(),
-                        message: journal.error,
+                        message: journal.error.clone(),
                         created_at: now(),
                     });
                 }
