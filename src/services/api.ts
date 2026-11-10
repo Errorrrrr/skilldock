@@ -175,6 +175,13 @@ export interface SingleContentChoice {
 }
 
 export const api = {
+  openExternalUrl: async (value: string): Promise<void> => {
+    const url = new URL(value)
+    if (url.protocol !== 'https:' || url.username || url.password)
+      throw new Error('只能打开有效的 HTTPS 网页地址')
+    if (isNative) await invoke('plugin:opener|open_url', { url: url.href })
+    else window.open(url.href, '_blank', 'noopener,noreferrer')
+  },
   replaceCurrentContent: (
     skillId: string,
     replacementId: string,

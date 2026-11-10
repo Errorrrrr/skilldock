@@ -654,11 +654,13 @@ export async function demoReadSkill(skillId: string) {
 export async function demoSearchCatalog(query: string, sites: string[]): Promise<CatalogResult> {
   const all = [
     {
-      slug: 'accessibility-audit',
-      name: 'Accessibility Audit',
-      description: '检查键盘操作、语义结构与可读性',
+      slug: '@gaxxx/bsession',
+      name: 'Browser',
+      description: '浏览器自动化与网页信息获取',
       version: '1.4.0',
       site: 'clawhub',
+      downloads: 3053,
+      homepageUrl: 'https://clawhub.ai/gaxxx/skills/bsession',
     },
     {
       slug: 'vue-performance',
@@ -666,6 +668,16 @@ export async function demoSearchCatalog(query: string, sites: string[]): Promise
       description: '定位 Vue 页面渲染与包体性能问题',
       version: '2.1.0',
       site: 'clawhub',
+      downloads: 0,
+    },
+    {
+      slug: 'vercel-labs/agent-browser@agent-browser',
+      name: 'Agent Browser',
+      description: '浏览器操作与自动化工作流',
+      version: '',
+      site: 'https://skills.sh',
+      installs: 1371982,
+      homepageUrl: 'https://skills.sh/vercel-labs/agent-browser/agent-browser',
     },
     {
       slug: 'product-copy',

@@ -393,6 +393,15 @@ pub struct CatalogItem {
     pub description: String,
     pub version: String,
     pub site: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub downloads: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub installs: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub homepage_url: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct CatalogResult {

@@ -1,4 +1,33 @@
-import type { CatalogSite } from './types'
+import type { CatalogItem, CatalogSite } from './types'
+
+const countFormatter = new Intl.NumberFormat('zh-CN')
+
+export function catalogUsage(item: CatalogItem): string {
+  if (
+    typeof item.downloads === 'number' &&
+    Number.isSafeInteger(item.downloads) &&
+    item.downloads >= 0
+  )
+    return `下载量 ${countFormatter.format(item.downloads)}`
+  if (
+    typeof item.installs === 'number' &&
+    Number.isSafeInteger(item.installs) &&
+    item.installs >= 0
+  )
+    return `安装量 ${countFormatter.format(item.installs)}`
+  return '下载量未提供'
+}
+
+export function catalogHomepage(item: CatalogItem | null): string | undefined {
+  if (!item?.homepageUrl) return undefined
+  try {
+    const url = new URL(item.homepageUrl)
+    if (url.protocol === 'https:' && !url.username && !url.password) return url.href
+  } catch {
+    // Older catalog responses may not include a usable homepage.
+  }
+  return undefined
+}
 
 export const defaultCatalogSites: CatalogSite[] = [
   { name: 'ClawHub', url: 'https://clawhub.ai' },
