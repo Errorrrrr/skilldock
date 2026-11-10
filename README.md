@@ -1,6 +1,6 @@
 # SkillDock
 
-统一管理 Agent Skill 的跨平台桌面应用与独立 CLI。当前版本 `0.3.12`。项目已在 macOS Apple Silicon 验证原生界面和真实文件操作；Windows/Linux 的安装与真实桌面操作仍需平台验收。
+统一管理 Agent Skill 的跨平台桌面应用与独立 CLI。当前版本 `0.3.13`。项目已在 macOS Apple Silicon 验证原生界面和真实文件操作；Windows/Linux 的安装与真实桌面操作仍需平台验收。
 
 ## 单份当前内容（0.3.0）
 
@@ -60,7 +60,7 @@ macOS 本地验证包：`target/debug/bundle/macos/SkillDock.app`。CLI：`targe
 - 预设从库或文件夹选取成员、整体分发与取消；手动分发和多个预设分别记录引用，最后一个引用取消后才移除链接。
 - 从 Skill 库和网站安装入口加入预设时同步跟随目标；成员已保存但目标同步失败会单独显示并支持重试。支持含内容快照的 ZIP 导入导出，重复导入相同预设复用已有定义；旧库保留锁定版本兼容。
 - Git 仓库/子目录、单 Skill 与整个集合导入；完整快照保留集合共享资源。
-- ClawHub、SkillHub、Skills.sh 搜索安装；ClawHub 保留作者限定标识；可添加 ClawHub API 兼容 HTTPS 站点。
+- ClawHub、SkillHub、Skills.sh 搜索安装；ClawHub 保留作者限定标识；可添加 ClawHub API 兼容 HTTPS 站点。发现列表和详情展示站点下载量（Skills.sh 为安装量），并可通过默认浏览器访问技能原地址；缺失数据明确提示未提供。
 - 网站安装分别记录入库、成员解析、各预设和各目标结果；识别合并后的 Skill 及全部来源成员，部分失败重试时跳过已完成步骤。
 - 按来源定时检查或更新，所有受管工具同步当前内容，按来源包保留一次更新恢复。
 - 统一目录可恢复迁移、文件事务日志、中断恢复、跨进程文件锁、内容摘要与路径边界检查。

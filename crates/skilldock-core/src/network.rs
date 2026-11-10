@@ -85,6 +85,41 @@ struct SearchEntry {
     summary: String,
     #[serde(default, deserialize_with = "nullable_string")]
     version: String,
+    #[serde(default)]
+    downloads: Option<u64>,
+    #[serde(default)]
+    stats: Option<SearchStats>,
+    #[serde(default, deserialize_with = "nullable_string")]
+    canonical_url: String,
+    #[serde(default)]
+    links: Option<SearchLinks>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchStats {
+    #[serde(default)]
+    downloads: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchLinks {
+    #[serde(default, deserialize_with = "nullable_string")]
+    canonical: String,
+}
+
+fn catalog_homepage(site: &str, value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let url = Url::parse(value)
+        .or_else(|_| Url::parse(site)?.join(value))
+        .ok()?;
+    (url.scheme() == "https"
+        && url.host_str().is_some()
+        && url.username().is_empty()
+        && url.password().is_none())
+    .then(|| url.to_string())
 }
 
 #[derive(Debug, Deserialize)]
@@ -434,6 +469,25 @@ async fn search_site(
         if slug.is_empty() || !seen_slugs.insert(slug.to_string()) {
             continue;
         }
+        let homepage_url = catalog_homepage(&endpoint.canonical, &entry.canonical_url)
+            .or_else(|| {
+                entry
+                    .links
+                    .as_ref()
+                    .and_then(|links| catalog_homepage(&endpoint.canonical, &links.canonical))
+            })
+            .or_else(|| {
+                if endpoint.canonical != CLAWHUB_SITE || entry.owner_handle.is_empty() {
+                    return None;
+                }
+                let mut url = Url::parse(CLAWHUB_SITE).ok()?;
+                url.path_segments_mut().ok()?.extend([
+                    entry.owner_handle.trim_start_matches('@'),
+                    "skills",
+                    &entry.slug,
+                ]);
+                Some(url.into())
+            });
         items.push(CatalogItem {
             slug: slug.to_owned(),
             name: if entry.display_name.trim().is_empty() {
@@ -444,6 +498,11 @@ async fn search_site(
             description: entry.summary.trim().to_owned(),
             version: entry.version.trim().to_owned(),
             site: endpoint.canonical.clone(),
+            downloads: entry
+                .downloads
+                .or_else(|| entry.stats.and_then(|stats| stats.downloads)),
+            installs: None,
+            homepage_url,
         });
     }
     Ok(items)
@@ -1469,6 +1528,9 @@ async fn search_skillhub(client: &Client, query: &str) -> Result<Vec<CatalogItem
             .into(),
             version: json_str(v, "version").into(),
             site: "https://api.skillhub.cn".into(),
+            downloads: v.get("downloads").and_then(serde_json::Value::as_u64),
+            installs: None,
+            homepage_url: catalog_homepage("https://skillhub.cn", json_str(v, "homepage")),
         })
         .collect())
 }
@@ -1500,6 +1562,21 @@ async fn search_skills_sh(client: &Client, query: &str) -> Result<Vec<CatalogIte
             description: format!("GitHub 来源：{}", json_str(v, "source")),
             version: String::new(),
             site: "https://skills.sh".into(),
+            downloads: None,
+            installs: v.get("installs").and_then(serde_json::Value::as_u64),
+            homepage_url: {
+                let mut url = Url::parse("https://skills.sh").unwrap();
+                let skill = if json_str(v, "skillId").is_empty() {
+                    json_str(v, "name")
+                } else {
+                    json_str(v, "skillId")
+                };
+                url.path_segments_mut()
+                    .unwrap()
+                    .extend(json_str(v, "source").split('/'))
+                    .push(skill);
+                Some(url.into())
+            },
         })
         .collect())
 }

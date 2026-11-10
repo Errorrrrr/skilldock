@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import SkillDirectoryActions from '@/components/SkillDirectoryActions.vue'
 import { computed, onMounted, ref, watch } from 'vue'
-import { Search, Globe2, Download, CheckCircle2, GitBranch, FolderInput } from 'lucide-vue-next'
+import {
+  Search,
+  Globe2,
+  Download,
+  CheckCircle2,
+  GitBranch,
+  FolderInput,
+  ExternalLink,
+} from 'lucide-vue-next'
 import Button from '@/components/ui/Button.vue'
 import Badge from '@/components/ui/Badge.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
@@ -9,7 +17,13 @@ import AppSheet from '@/components/ui/AppSheet.vue'
 import AppDialog from '@/components/ui/AppDialog.vue'
 import AppPagination from '@/components/ui/AppPagination.vue'
 import { api } from '@/services/api'
-import { defaultCatalogSites, normalizeCatalogSites, catalogSiteKey } from '@/services/catalogSites'
+import {
+  defaultCatalogSites,
+  normalizeCatalogSites,
+  catalogSiteKey,
+  catalogUsage,
+  catalogHomepage,
+} from '@/services/catalogSites'
 import { useAppStore } from '@/stores/app'
 import { catalogInstallSessions } from '@/stores/catalogInstall'
 import type { CatalogItem } from '@/services/types'
@@ -103,6 +117,15 @@ async function search() {
 function show(item: CatalogItem) {
   detail.value = item
   detailOpen.value = true
+}
+async function openHomepage(item: CatalogItem) {
+  const url = catalogHomepage(item)
+  if (!url) return
+  try {
+    await api.openExternalUrl(url)
+  } catch (error) {
+    app.error = error instanceof Error ? error.message : '原地址打开失败'
+  }
 }
 function startInstall(item: CatalogItem) {
   if (installing.value) return
@@ -259,6 +282,19 @@ onMounted(() => {
               <Badge>{{ siteLabel(item.site) }}</Badge>
             </div>
             <div class="list-row-meta">{{ item.description }} · 版本 {{ item.version }}</div>
+            <div class="catalog-stats">
+              <span class="subtle">{{ catalogUsage(item) }}</span>
+              <a
+                v-if="catalogHomepage(item)"
+                :href="catalogHomepage(item)"
+                class="link-button catalog-homepage"
+                target="_blank"
+                rel="noopener noreferrer"
+                :aria-label="`访问 ${item.name} 的原地址（在浏览器中打开）`"
+                @click.prevent="openHomepage(item)"
+                ><ExternalLink style="width: 14px; height: 14px" />访问原地址</a
+              >
+            </div>
             <SkillDirectoryActions :catalog="item" />
           </div>
           <Badge v-if="installed.has(`${catalogSiteKey(item.site)}:${item.slug}`)" tone="green"
@@ -299,6 +335,25 @@ onMounted(() => {
         <div class="detail-row">
           <dt>来源网站</dt>
           <dd>{{ siteLabel(detail?.site || '') }}</dd>
+        </div>
+        <div class="detail-row">
+          <dt>使用统计</dt>
+          <dd>{{ detail ? catalogUsage(detail) : '' }}</dd>
+        </div>
+        <div class="detail-row">
+          <dt>原地址</dt>
+          <dd>
+            <a
+              v-if="detail && catalogHomepage(detail)"
+              :href="catalogHomepage(detail)"
+              class="link-button catalog-homepage"
+              target="_blank"
+              rel="noopener noreferrer"
+              @click.prevent="openHomepage(detail)"
+              ><ExternalLink style="width: 14px; height: 14px" />访问原地址</a
+            >
+            <span v-else>此站点未提供原地址。</span>
+          </dd>
         </div>
         <div class="detail-row">
           <dt>标识</dt>
@@ -449,3 +504,18 @@ onMounted(() => {
     >
   </div>
 </template>
+
+<style scoped>
+.catalog-stats {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 6px;
+}
+.catalog-homepage {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+</style>

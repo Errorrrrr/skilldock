@@ -31,7 +31,7 @@ skillOrigins: { [key in string]?: Array<string> },
 libraryEntries: { [key in string]?: string }, skillEntityPaths?: { [key in string]?: string }, unmanagedTargetPaths: Array<string>, packages: Array<SkillPackage>, presetPackages: Array<PresetPackage>, presetApplications: Array<PresetApplication>, externalInstallations: Array<ExternalInstallation>, initialized: boolean, storageRoot: string, revision: number, skills: Array<Skill>, sources: Array<Source>, targets: Array<Target>, bindings: Array<Binding>, presets: Array<Preset>, tasks: Array<Task>, settings: Settings, schemaVersion: number, };
 export type ScanItem = { path: string, name: string, description: string, status: string, error: string, };
 export type ScanResult = { root: string, items: Array<ScanItem>, warnings: Array<string>, };
-export type CatalogItem = { slug: string, name: string, description: string, version: string, site: string, };
+export type CatalogItem = { slug: string, name: string, description: string, version: string, site: string, downloads?: number, installs?: number, homepageUrl?: string, };
 export type CatalogResult = { items: Array<CatalogItem>, errors: Array<string>, };
 export type PlanReplacement = { nextEntityPath: string, nextVersion: string, bindingId: string, skillId: string, entityPath: string, version: string, claims: Array<string>, blockingClaims: Array<string>, contentEqual: boolean | null, restoresOriginal: boolean, };
 export type PlanItem = { replacement?: PlanReplacement, skillId: string, targetId: string, path: string, action: string, error: string, };
