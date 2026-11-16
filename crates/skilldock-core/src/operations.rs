@@ -1699,12 +1699,27 @@ impl Engine {
         )?;
         Ok(serde_json::to_value(state)?)
     }
-    fn source_failure(&self, source_id: &str, message: String) -> error::Error {
+    fn source_failure(
+        &self,
+        baseline: &Snapshot,
+        source: &Source,
+        apply: bool,
+        message: String,
+    ) -> error::Error {
         let result = self.transact("update_error", "来源检查失败", |s, _, _| {
-            if let Some(src) = s.sources.iter_mut().find(|x| x.id == source_id) {
-                src.status = "error".into();
-                src.error = message.clone();
-                src.last_checked = now();
+            if s.storage_root != baseline.storage_root {
+                return fail("存储位置已变化，未覆盖最新状态");
+            }
+            let src = s
+                .sources
+                .iter_mut()
+                .find(|x| x.id == source.id)
+                .filter(|current| *current == source)
+                .ok_or_else(|| error::Error::Message("来源已变化，未覆盖最新状态".into()))?;
+            src.status = "error".into();
+            src.error = message.clone();
+            src.last_checked = now();
+            if apply || src.policy.mode != "auto" || src.next_check.is_empty() {
                 src.next_check = crate::schedule::next_check(&src.policy);
             }
             Ok(())
@@ -1766,9 +1781,10 @@ impl Engine {
             }),
             _ => return fail("该来源尚不支持自动更新"),
         };
-        let prepared = prepared.map_err(|e| self.source_failure(source_id, e.to_string()))?;
+        let prepared =
+            prepared.map_err(|e| self.source_failure(&baseline, &source, apply, e.to_string()))?;
         let original_path = fs::canonicalize(&prepared.path)
-            .map_err(|e| self.source_failure(source_id, e.to_string()))?;
+            .map_err(|e| self.source_failure(&baseline, &source, apply, e.to_string()))?;
         if source.kind == "local"
             && (original_path.starts_with(&baseline.storage_root)
                 || Path::new(&baseline.storage_root).starts_with(&original_path))
@@ -1778,10 +1794,10 @@ impl Engine {
         let dependency_issues = files::python_environment_issues(&original_path)?;
         let local_view = if source.kind == "local" {
             self.local_source_view(&original_path, true)
-                .map_err(|e| self.source_failure(source_id, e.to_string()))?
+                .map_err(|e| self.source_failure(&baseline, &source, apply, e.to_string()))?
         } else {
             Self::remote_source_view(&original_path)
-                .map_err(|e| self.source_failure(source_id, e.to_string()))?
+                .map_err(|e| self.source_failure(&baseline, &source, apply, e.to_string()))?
         };
         let path = local_view
             .as_ref()
@@ -1793,14 +1809,15 @@ impl Engine {
             return fail("本地来源与统一库互相包含，拒绝更新");
         }
         let digest = files::content_digest(&path)
-            .map_err(|e| self.source_failure(source_id, e.to_string()))?;
+            .map_err(|e| self.source_failure(&baseline, &source, apply, e.to_string()))?;
         let scanned = files::scan(&path.join(&source.scan_subdir))
-            .map_err(|e| self.source_failure(source_id, e.to_string()))?;
+            .map_err(|e| self.source_failure(&baseline, &source, apply, e.to_string()))?;
         let version = if prepared.version.is_empty() {
             digest.clone()
         } else {
             prepared.version.clone()
         };
+        let mut update_started = false;
         let updated = self.transact(
             "update",
             if apply {
@@ -1820,16 +1837,12 @@ impl Engine {
                 if src.updates_removed == Some(true) {
                     return fail("检查期间此来源已移除更新管理");
                 }
-                if src.version != source.version
-                    || src.kind != source.kind
-                    || src.url != source.url
-                    || src.reference != source.reference
-                    || src.scan_subdir != source.scan_subdir
-                    || src.policy.mode != source.policy.mode
-                    || src.path != source.path
-                {
+                if src != &source {
                     return fail("检查期间来源或策略已变化，请重试");
                 }
+                // Lock conflicts and stale requests are operation rejections,
+                // not failures of the current source.
+                update_started = true;
                 if apply {
                     for package in s
                         .packages
@@ -1972,7 +1985,10 @@ impl Engine {
                     }
                     .into();
                 }
-                if apply {
+                // Single-content libraries validate and switch every binding in
+                // finalize, including manual ones. Legacy updates only follow
+                // manual bindings and retain their pinned-content semantics.
+                if apply && s.schema_version < 3 {
                     for binding in &mut s.bindings {
                         if binding.follow
                             && binding.claims.iter().all(|c| c == "manual")
@@ -2061,7 +2077,11 @@ impl Engine {
                 }
                 let src = s.sources.iter_mut().find(|x| x.id == source_id).unwrap();
                 src.last_checked = now();
-                src.next_check = crate::schedule::next_check(&src.policy);
+                // A check-only action must not consume an automatic application.
+                // Keep its deadline so an overdue update still runs on the next tick.
+                if apply || src.policy.mode != "auto" || src.next_check.is_empty() {
+                    src.next_check = crate::schedule::next_check(&src.policy);
+                }
                 src.status = status;
                 src.error = details.join("；");
                 if apply {
@@ -2069,7 +2089,14 @@ impl Engine {
                 }
                 Ok(())
             },
-        )?;
+        );
+        let updated = updated.map_err(|e| {
+            if update_started {
+                self.source_failure(&baseline, &source, apply, e.to_string())
+            } else {
+                e
+            }
+        })?;
         if apply {
             self.reconcile_packages()?;
             return self.snapshot();
@@ -2345,5 +2372,73 @@ mod remote_view_tests {
         assert!(second.path().join("node_modules/p/index.js").is_file());
         assert!(!second.path().join(".git").exists());
         assert!(checkout.path().join(".git").is_dir());
+    }
+}
+
+#[cfg(test)]
+mod update_failure_tests {
+    use super::*;
+
+    fn fixture() -> (tempfile::TempDir, Engine, Snapshot) {
+        let temp = tempfile::tempdir().unwrap();
+        let engine = Engine::new(Some(temp.path().join("config"))).unwrap();
+        let mut state = engine
+            .configure(temp.path().join("library").to_str().unwrap())
+            .unwrap();
+        state.sources.push(serde_json::from_value(json!({
+            "id":"remote", "name":"Remote", "kind":"git", "path":"", "url":"https://example.com/skills.git",
+            "reference":"main", "version":"old", "policy":{"mode":"auto","intervalHours":24,"dailyTime":"09:00"},
+            "lastChecked":"2000-01-01T00:00:00Z", "nextCheck":"2000-01-01T01:00:00Z", "status":"current", "error":""
+        })).unwrap());
+        files::atomic_json(&Path::new(&state.storage_root).join("state.json"), &state).unwrap();
+        (temp, engine, state)
+    }
+
+    #[test]
+    fn failed_manual_check_preserves_auto_deadline_but_apply_failure_advances_it() {
+        let (_temp, engine, baseline) = fixture();
+        engine.source_failure(
+            &baseline,
+            &baseline.sources[0],
+            false,
+            "download failed".into(),
+        );
+        let failed = engine.snapshot().unwrap();
+        assert_eq!(failed.sources[0].status, "error");
+        assert_eq!(failed.sources[0].next_check, baseline.sources[0].next_check);
+        assert_eq!(failed.tasks.last().unwrap().status, "failed");
+        engine.source_failure(&failed, &failed.sources[0], true, "apply failed".into());
+        let next = engine.snapshot().unwrap();
+        assert_ne!(next.sources[0].next_check, failed.sources[0].next_check);
+        assert!(
+            chrono::DateTime::parse_from_rfc3339(&next.sources[0].next_check).unwrap()
+                > chrono::Utc::now()
+        );
+    }
+
+    #[test]
+    fn stale_failure_keeps_newer_version_check_and_policy_unchanged() {
+        let (_temp, engine, baseline) = fixture();
+        for change in ["version", "last_checked", "policy", "removed"] {
+            let mut latest = baseline.clone();
+            match change {
+                "version" => latest.sources[0].version = "new".into(),
+                "last_checked" => latest.sources[0].last_checked = "2026-11-16T01:00:00Z".into(),
+                "policy" => latest.sources[0].policy.daily_time = Some("10:00".into()),
+                _ => latest.sources.clear(),
+            }
+            latest.revision += 1;
+            let state_file = Path::new(&latest.storage_root).join("state.json");
+            files::atomic_json(&state_file, &latest).unwrap();
+            let before = fs::read(&state_file).unwrap();
+            let error = engine.source_failure(
+                &baseline,
+                &baseline.sources[0],
+                false,
+                "stale check failed".into(),
+            );
+            assert!(error.to_string().contains("未覆盖最新状态"));
+            assert_eq!(fs::read(&state_file).unwrap(), before, "{change}");
+        }
     }
 }

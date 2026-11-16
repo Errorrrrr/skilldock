@@ -453,7 +453,7 @@ pub(crate) fn finalize(
             } else {
                 let actual = fs::read_link(&binding.path).map_err(|error| {
                     error::Error::Message(format!(
-                        "分发位置不是可读取的软链接，未覆盖：{}（{error}）；请重新预览迁移或诊断分发状态",
+                        "分发位置不是可读取的软链接，未覆盖：{}（{error}）；请在设置 → 单一当前内容中检查并修复分发链接",
                         binding.path
                     ))
                 })?;
@@ -497,6 +497,23 @@ pub(crate) fn finalize(
 }
 
 impl Engine {
+    pub(crate) fn repair_distribution_links(&self, request: &Value) -> Result<Value> {
+        let state = self.transact(
+            "repair_distribution_links",
+            "备份目录并修复分发链接",
+            |state, root, changes| {
+                if state.schema_version < 3 {
+                    return fail("请先预览并切换为单一当前内容");
+                }
+                if request["expectedRevision"].as_u64() != Some(state.revision as u64) {
+                    return fail("资料库已变化，请重新预览");
+                }
+                plan_directory_repairs(state, root, request, changes)
+            },
+        )?;
+        Ok(serde_json::to_value(state)?)
+    }
+
     pub(crate) fn preview_single_content(&self) -> Result<Value> {
         let state = self.snapshot()?;
         let repairs = directory_repairs(&state)?;

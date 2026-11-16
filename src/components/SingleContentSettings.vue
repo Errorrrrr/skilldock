@@ -154,6 +154,24 @@ async function arrange() {
   if (ok) open.value = false
   busy.value = false
 }
+async function repairLinks() {
+  if (!preview.value?.directoryRepairs.length || busy.value) return
+  busy.value = true
+  error.value = ''
+  try {
+    app.snapshot = await api.repairDistributionLinks(
+      preview.value.revision,
+      preview.value.directoryRepairs,
+    )
+    app.notice = '已备份原目录并恢复分发链接，可回到更新中心重试更新入库'
+    open.value = false
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : String(reason)
+    await app.refresh(true)
+  } finally {
+    busy.value = false
+  }
+}
 </script>
 <template>
   <section class="callout single-content-settings">
@@ -162,20 +180,26 @@ async function arrange() {
     <p v-else>旧库仍保留多版本规则。预览并确认后，可统一工具内容、减少历史副本。</p>
     <Button v-if="!enabled" :loading="busy" @click="inspect()">预览简化资料库</Button>
     <Button v-else-if="!arranged" :loading="busy" @click="arrange">整理为名称目录</Button>
+    <Button v-if="enabled" :loading="busy" @click="inspect()">检查并修复分发链接</Button>
   </section>
   <AppDialog
     v-model:open="open"
-    title="切换为单一当前内容"
-    description="请确认每个同名 Skill 使用哪份内容。所有已管理工具将统一使用所选内容。"
+    :title="enabled ? '检查并修复分发链接' : '切换为单一当前内容'"
+    :description="
+      enabled
+        ? '确认后备份被替换的目录，恢复为指向统一库当前内容的链接。'
+        : '请确认每个同名 Skill 使用哪份内容。所有已管理工具将统一使用所选内容。'
+    "
   >
-    <p>
+    <p v-if="!enabled">
       影响 {{ preview?.bindings.length || 0 }} 条分发和
       {{ preview?.presets.length || 0 }}
       个预设。目标不再固定旧内容，预设只保存成员；相同完整内容会复用。
     </p>
     <p v-if="affectedTargets">受影响工具：{{ affectedTargets }}</p>
-    <Button v-if="!enabled" :loading="busy" @click="inspect(false)">重新检查（保留选择）</Button>
-    <section v-if="selectedSnapshotIssues.length" class="callout">
+    <Button :loading="busy" @click="inspect(false)">重新检查</Button>
+    <p v-if="enabled && !preview?.directoryRepairs.length">未发现需要备份修复的实体目录。</p>
+    <section v-if="!enabled && selectedSnapshotIssues.length" class="callout">
       <strong>所选内容有 {{ selectedSnapshotIssues.length }} 个来源包需要处理</strong>
       <p>重新收录会将当前文件保存为新快照，保留原文件和现有分发链接。确认迁移后才切换工具内容。</p>
       <div
@@ -196,7 +220,7 @@ async function arrange() {
         </Button>
       </div>
     </section>
-    <section v-if="gitBatches.length" class="callout">
+    <section v-if="!enabled && gitBatches.length" class="callout">
       <strong>按 Git 来源批量选择</strong>
       <p>使用该来源已收录的内容，保留已手动选择的项目；提交前仍可逐项调整。</p>
       <div v-for="batch in gitBatches" :key="batch.sourceId" class="git-source-batch">
@@ -221,14 +245,14 @@ async function arrange() {
         </li>
       </ul>
     </section>
-    <div v-if="conflicts.length" class="selection-progress">
+    <div v-if="!enabled && conflicts.length" class="selection-progress">
       <p role="status">已选择 {{ conflicts.length - pendingCount }} / {{ conflicts.length }} 项</p>
       <label>
         <input v-model="onlyPending" type="checkbox" />
         仅显示未选择项（取消勾选可复核全部）
       </label>
     </div>
-    <div v-for="group in visibleConflicts" :key="group.name" class="list-stack">
+    <div v-for="group in enabled ? [] : visibleConflicts" :key="group.name" class="list-stack">
       <h3>{{ group.name }}</h3>
       <label v-for="skill in group.skills" :key="skill.id" class="choice">
         <input
@@ -253,14 +277,19 @@ async function arrange() {
         />分别保留为独立 Skill（目录加名称后缀）</label
       >
     </div>
-    <p>
+    <p v-if="!enabled">
       迁移后只保留当前内容和仍有实际引用的对象。无引用的旧历史会回收，不能再从任务记录选择旧版本。原目录恢复备份和外部链接继续受保护。
     </p>
     <p v-if="error" class="field-error" role="alert">{{ error }}</p>
     <template #footer>
       <Button :disabled="busy" @click="open = false">取消</Button>
-      <Button v-if="enabled" variant="primary" :loading="busy" @click="arrange"
-        >重试目录整理</Button
+      <Button
+        v-if="enabled"
+        variant="primary"
+        :disabled="!preview?.directoryRepairs.length"
+        :loading="busy"
+        @click="repairLinks"
+        >备份目录并修复链接</Button
       >
       <Button v-else variant="primary" :disabled="incomplete" :loading="busy" @click="apply">{{
         preview?.directoryRepairs.length ? '备份目录并统一内容' : '确认统一内容并整理'
