@@ -192,6 +192,11 @@ export const api = {
       : demo.demoReplaceCurrentContent(skillId, replacementId, expectedRevision),
   previewSingleContent: (): Promise<SingleContentPreview> =>
     isNative ? native('preview_single_content') : demo.demoPreviewSingleContent(),
+  repairDistributionLinks: (
+    expectedRevision: number,
+    directoryRepairs: SingleContentDirectoryRepair[],
+  ): Promise<Snapshot> =>
+    native('repair_distribution_links', { expectedRevision, directoryRepairs }),
   enableSingleContent: (
     expectedRevision: number,
     choices: SingleContentChoice[],

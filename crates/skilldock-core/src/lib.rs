@@ -613,6 +613,7 @@ impl Engine {
                 )?)
             }
             "enable_single_content" => self.enable_single_content(&request),
+            "repair_distribution_links" => self.repair_distribution_links(&request),
             "undo_content_update" => self.undo_content_update(&request),
             "replace_current_content" => self.replace_current_content(&request),
             "preview_bind_source" => self.bind_source(&request, true).await,
